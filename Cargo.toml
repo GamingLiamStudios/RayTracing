@@ -1,0 +1,32 @@
+[package]
+name = "rtesting"
+version = "0.1.0"
+edition = "2021"
+authors = [
+    "GamingLiamStudios <58615717+GamingLiamStudios@users.noreply.github.com>",
+]
+
+[dependencies]
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+png = "0.17"
+rgb = "0.8"
+bytemuck = { version = "1.17", features = ["must_cast", "min_const_generics"] }
+
+glam = "0.29"
+rand = "0.8"
+slotmap = "1.0"
+
+indicatif = { version = "0.17", features = ["rayon", "improved_unicode"] }
+rayon = "1.10"
+
+gltf = { version = "1.4", features = [] }
+
+[lints.clippy]
+enum_glob_use = "deny"
+pedantic = "deny"
+nursery = "deny"
+unwrap_used = "deny"
+perf = "deny"
+all = "deny"
