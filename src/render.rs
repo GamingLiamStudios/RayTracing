@@ -1,4 +1,5 @@
-// TODO: Benchmark differences between Enum and Trait for storing render objects
+// Copyright (C) 2024 GLStudios
+// SPDX-License-Identifier: LGPL-2.1-only
 
 use core::f32;
 use std::ops::Bound;
@@ -65,6 +66,7 @@ pub struct Vertex {
     // TODO: uv: Vec2,
 }
 
+// TODO: Benchmark differences between Enum and Trait for storing render objects
 pub enum Object {
     // TODO: Support Ellipsoid
     Sphere { center: Vec3A, radius: f32 },
