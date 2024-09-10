@@ -47,8 +47,12 @@ pub struct HitRecord {
     pub normal: Vec3A,
 }
 
+slotmap::new_key_type! {
+    pub struct MaterialKey;
+}
+
 pub struct Scene {
-    pub materials: SlotMap<slotmap::DefaultKey, Material>,
+    pub materials: SlotMap<MaterialKey, Material>,
     pub objects:   Vec<Static>,
 }
 
@@ -60,6 +64,7 @@ pub struct Material {
     pub radiance:   f32,
 }
 
+#[derive(Clone, Copy)]
 pub struct Vertex {
     pub(crate) pos:    Vec3A,
     pub(crate) normal: Vec3A,
@@ -67,6 +72,7 @@ pub struct Vertex {
 }
 
 // TODO: Benchmark differences between Enum and Trait for storing render objects
+#[derive(Clone, Copy)]
 pub enum Object {
     // TODO: Support Ellipsoid
     Sphere { center: Vec3A, radius: f32 },
@@ -101,14 +107,14 @@ impl Scene {
     pub fn new() -> Self {
         Self {
             objects:   Vec::new(),
-            materials: SlotMap::new(),
+            materials: SlotMap::with_key(),
         }
     }
 
     pub fn add_material(
         &mut self,
         mat: Material,
-    ) -> slotmap::DefaultKey {
+    ) -> MaterialKey {
         self.materials.insert(mat)
     }
 
@@ -121,7 +127,7 @@ impl Scene {
 
     pub fn material(
         &self,
-        mat_idx: slotmap::DefaultKey,
+        mat_idx: MaterialKey,
     ) -> Option<&Material> {
         self.materials.get(mat_idx)
     }
@@ -130,7 +136,7 @@ impl Scene {
         &self,
         ray: &Ray,
         mut search_range: (Bound<f32>, Bound<f32>),
-    ) -> Option<(HitRecord, slotmap::DefaultKey)> {
+    ) -> Option<(HitRecord, MaterialKey)> {
         let mut closest = None;
 
         for bvh in &self.objects {

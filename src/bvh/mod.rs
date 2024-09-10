@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 
 mod fixed;
+mod tree;
 
 use std::arch::x86_64::{
     __m128,

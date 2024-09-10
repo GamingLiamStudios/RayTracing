@@ -6,17 +6,21 @@ use std::ops::{
     RangeBounds,
 };
 
-use slotmap::DefaultKey;
+use rayon::iter::{
+    IntoParallelRefIterator,
+    ParallelIterator,
+};
 
 use super::BoundingBox;
 use crate::render::{
     HitRecord,
+    MaterialKey,
     Object,
     Ray,
 };
 
 pub struct StaticBuilder {
-    pub objects: Vec<(Object, DefaultKey)>,
+    objects:     Vec<(Object, MaterialKey)>,
     root_bounds: BoundingBox,
 }
 
@@ -30,10 +34,14 @@ impl StaticBuilder {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.objects.len()
+    }
+
     pub fn append(
         &mut self,
         object: Object,
-        material: DefaultKey,
+        material: MaterialKey,
     ) -> &mut Self {
         self.root_bounds.grow_to_include(&object);
         self.objects.push((object, material));
@@ -41,6 +49,7 @@ impl StaticBuilder {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::too_many_lines)]
     pub fn build(mut self) -> Static {
         // Top-down building - divide and conquer
         let mut tree = vec![BvhNode {
@@ -64,34 +73,66 @@ impl StaticBuilder {
                 continue;
             }
 
-            let mut part_point = tree_node.index;
-            let mut left = BoundingBox::new();
-            let mut right = BoundingBox::new();
-            for i in tree_node.index..tree_node.index + tree_node.objects {
-                let (object, _) = &self.objects[i as usize];
+            let objects = &self.objects
+                [tree_node.index as usize..tree_node.index as usize + tree_node.objects as usize];
 
-                let mut left_grown = left;
-                left_grown.grow_to_include(object);
-                let mut right_grown = right;
-                right_grown.grow_to_include(object);
+            // For each axis, find part point
+            let mut lowest_cost = None;
+            for axis in 0..3 {
+                // Iterate over all N objects
+                let axis_lowest = objects
+                    .par_iter()
+                    .filter_map(
+                        |(obj, _)| {
+                            // split at axis for Nth object
+                            let split_point = obj.center()[axis];
 
-                let left_sa = f64::from(left_grown.half_surface_area())
-                    / f64::from(part_point - tree_node.index + 1);
-                let right_sa =
-                    f64::from(right_grown.half_surface_area()) / f64::from(i - part_point + 1);
+                            // calculate cost of either side
+                            let (left, left_count, right) = objects.iter().fold(
+                                (BoundingBox::new(), 0, BoundingBox::new()),
+                                |(mut left, mut left_count, mut right), (obj, _)| {
+                                    if obj.center()[axis] > split_point {
+                                        right.grow_to_include(obj);
+                                    } else {
+                                        left.grow_to_include(obj);
+                                        left_count += 1;
+                                    }
+                                    (left, left_count, right)
+                                },
+                            );
 
-                if left_sa > right_sa {
-                    right = right_grown;
-                } else {
-                    left = left_grown;
-                    self.objects.swap(part_point as usize, i as usize);
-                    part_point += 1;
-                }
+                            if left_count == 0
+                                || left_count == u32::try_from(objects.len()).expect("fuck")
+                            {
+                                return None;
+                            }
+
+                            let left = f64::from(left.half_surface_area()) * f64::from(left_count);
+                            let right = f64::from(right.half_surface_area())
+                                * f64::from(
+                                    u32::try_from(objects.len()).expect("fuck") - left_count,
+                                );
+                            let total = left + right;
+
+                            Some((total, split_point, axis))
+                        },
+                    )
+                    .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
+
+                lowest_cost = match (lowest_cost, axis_lowest) {
+                    (Some((lowest_cost, lowest_split, lowest_axis)), Some((cost, split, axis))) => {
+                        if lowest_cost > cost {
+                            Some((cost, split, axis))
+                        } else {
+                            Some((lowest_cost, lowest_split, lowest_axis))
+                        }
+                    },
+                    (Some(valid), None) | (None, Some(valid)) => Some(valid),
+                    (None, None) => None,
+                };
             }
 
-            if part_point - tree_node.index == 0
-                || tree_node.index + tree_node.objects - part_point == 0
-            {
+            let Some((_, split_point, axis)) = lowest_cost else {
                 // Just leave it
                 println!(
                     "Couldn't split further. size {} leaf exists",
@@ -101,22 +142,42 @@ impl StaticBuilder {
                 depth_sum += depth;
                 max_depth = max_depth.max(depth);
                 continue;
+            };
+
+            let objects = &mut self.objects
+                [tree_node.index as usize..tree_node.index as usize + tree_node.objects as usize];
+
+            let mut right_start = 0;
+            let mut left = BoundingBox::new();
+            let mut right = BoundingBox::new();
+            for i in 0..tree_node.objects {
+                let (obj, _) = &objects[i as usize];
+
+                if obj.center()[axis] > split_point {
+                    right.grow_to_include(obj);
+                } else {
+                    left.grow_to_include(obj);
+                    objects.swap(right_start as usize, i as usize);
+                    right_start += 1;
+                }
             }
 
             search_nodes.push((tree.len(), depth + 1));
             search_nodes.push((tree.len() + 1, depth + 1));
 
+            let objects = tree_node.objects;
+            let index = tree_node.index;
+
             tree.push(BvhNode {
-                bounds:  left,
-                objects: part_point - tree_node.index,
-                index:   tree_node.index,
+                bounds: left,
+                objects: right_start,
+                index,
             });
 
-            let tree_node = &tree.last().expect("No items in tree");
             tree.push(BvhNode {
                 bounds:  right,
-                objects: tree[idx].objects - tree_node.objects,
-                index:   part_point,
+                objects: objects - right_start,
+                index:   index + right_start,
             });
 
             tree[idx].index = u32::try_from(tree.len() - 2).expect("BVH too large");
@@ -147,7 +208,7 @@ struct BvhNode {
 }
 
 pub struct Static {
-    objects: Vec<(Object, DefaultKey)>,
+    objects: Vec<(Object, MaterialKey)>,
     tree:    Vec<BvhNode>,
 }
 
@@ -156,7 +217,7 @@ impl Static {
         &self,
         ray: &Ray,
         mut search_range: (Bound<f32>, Bound<f32>),
-    ) -> Option<(HitRecord, slotmap::DefaultKey)> {
+    ) -> Option<(HitRecord, MaterialKey)> {
         let mut closest = None;
 
         // Probably good to do a quick check here with root node
@@ -221,7 +282,7 @@ impl Static {
         mut search_range: (Bound<f32>, Bound<f32>),
         start: usize,
         len: usize,
-    ) -> Option<(HitRecord, slotmap::DefaultKey)> {
+    ) -> Option<(HitRecord, MaterialKey)> {
         let mut closest = None;
 
         for (obj, mat_idx) in &self.objects[start..start + len] {
@@ -260,7 +321,43 @@ impl Static {
                     )
                 },
                 Object::Triangle { a, b, c } => {
-                    unimplemented!()
+                    let e1 = b.pos - a.pos;
+                    let e2 = c.pos - a.pos;
+
+                    let ray_cross_e2 = ray.direction.cross(e2);
+                    let det = e1.dot(ray_cross_e2);
+
+                    if det > -f32::EPSILON && det < f32::EPSILON {
+                        continue; // This ray is parallel to this triangle.
+                    }
+
+                    let inv_det = 1.0 / det;
+                    let s = ray.origin - a.pos;
+                    let u = inv_det * s.dot(ray_cross_e2);
+                    if !(0.0..=1.0).contains(&u) {
+                        continue;
+                    }
+
+                    let s_cross_e1 = s.cross(e1);
+                    let v = inv_det * ray.direction.dot(s_cross_e1);
+                    if v < 0.0 || u + v > 1.0 {
+                        continue;
+                    }
+
+                    // At this stage we can compute t to find out where the intersection point is on
+                    // the line.
+                    let t = inv_det * e2.dot(s_cross_e1);
+                    if t < f32::EPSILON {
+                        continue;
+                    }
+
+                    (
+                        HitRecord {
+                            along:  t,
+                            normal: a.normal * u + b.normal * v + c.normal * (1.0 - u - v),
+                        },
+                        *mat_idx,
+                    )
                 },
             };
 

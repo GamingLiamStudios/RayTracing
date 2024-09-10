@@ -5,7 +5,9 @@
 #![feature(new_range_api)]
 #![feature(generic_arg_infer)]
 #![feature(iter_map_windows)]
+#![feature(iter_array_chunks)]
 #![feature(const_mut_refs)]
+#![feature(allocator_api)]
 
 use core::f32;
 use std::{
@@ -16,6 +18,18 @@ use std::{
 use glam::{
     Vec2,
     Vec3A,
+};
+use gltf::{
+    accessor::{
+        DataType,
+        Dimensions,
+    },
+    mesh::{
+        Mode,
+        Reader,
+    },
+    Gltf,
+    Semantic,
 };
 use indicatif::{
     ParallelProgressIterator,
@@ -31,6 +45,11 @@ use rayon::iter::{
     ParallelBridge,
     ParallelIterator,
 };
+use render::{
+    Material,
+    Object,
+    Vertex,
+};
 use rgb::Rgb;
 use tracing::{
     event,
@@ -40,13 +59,14 @@ use tracing::{
 
 mod bvh;
 mod render;
+mod types;
 
 pub const ACNE_MIN: f32 = 0.01;
 
 pub const WIDTH: u32 = 800;
 pub const HEIGHT: u32 = 600;
 
-pub const SAMPLES: u32 = 50;
+pub const SAMPLES: u32 = 500;
 pub const BOUNCES: usize = 50;
 
 #[inline]
@@ -82,6 +102,7 @@ fn process_ray(mut input: Vec3A) -> Rgb<u16> {
 
 #[allow(clippy::cast_precision_loss)]
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::many_single_char_names)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fmt_subscriber = tracing_subscriber::fmt::Subscriber::builder()
         .with_max_level(tracing::Level::TRACE)
@@ -94,128 +115,63 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Building scene...");
     let begin_time = std::time::Instant::now();
 
-    {
-        // Earth
-        let object = render::Object::Sphere {
-            center: Vec3A::new(0.0, -1000.0, 0.0),
-            radius: 1000f32,
-        };
-        let material = render::Material {
-            diffuse:    Vec3A::new(0.5, 0.5, 0.5),
-            smoothness: 0f32,
+    let material = Material {
+        diffuse:    Vec3A::splat(0.3),
+        emmitance:  Vec3A::splat(0.0),
+        smoothness: 0.3,
+        radiance:   0.0,
+    };
+    let material = scene.add_material(material);
+    let (document, buffers, _) = gltf::import("models/bunny.glb")?;
 
-            emmitance: Vec3A::splat(1f32),
-            radiance:  0f32,
-        };
-
-        let material = scene.add_material(material);
-        builder.append(object, material);
-    }
-
-    {
-        // A
-        let object = render::Object::Sphere {
-            center: Vec3A::new(-4.0, 1.0, 0.0),
-            radius: 1.0,
-        };
-        let material = render::Material {
-            diffuse:    Vec3A::new(0.4, 0.2, 0.1),
-            smoothness: 0f32,
-
-            emmitance: Vec3A::splat(1f32),
-            radiance:  0f32,
-        };
-
-        let material = scene.add_material(material);
-        builder.append(object, material);
-    }
-
-    {
-        // B
-        let object = render::Object::Sphere {
-            center: Vec3A::new(0.0, 1.0, 0.0),
-            radius: 1.0,
-        };
-        let material = render::Material {
-            diffuse:    Vec3A::new(0.7, 0.6, 0.5),
-            smoothness: 1.0f32,
-
-            emmitance: Vec3A::splat(1f32),
-            radiance:  0f32,
-        };
-
-        let material = scene.add_material(material);
-        builder.append(object, material);
-    }
-
-    let mut rng = rand::thread_rng();
-    for a in -11..11 {
-        for b in -11..11 {
-            let material = rng.gen_range(0.0..1.0);
-            let center = Vec3A::new(
-                0.9f32.mul_add(rng.gen_range(0.0..1.0), a as f32),
-                0.2,
-                0.9f32.mul_add(rng.gen_range(0.0..1.0), b as f32),
-            );
-
-            if (center - Vec3A::new(4.0, 0.2, 0.0)).length() > 0.9 {
-                match material {
-                    ..0.8 => {
-                        // Diffuse
-                        let albedo = Vec3A::new(
-                            rng.gen_range(0.0..1.0),
-                            rng.gen_range(0.0..1.0),
-                            rng.gen_range(0.0..1.0),
-                        ) * Vec3A::new(
-                            rng.gen_range(0.0..1.0),
-                            rng.gen_range(0.0..1.0),
-                            rng.gen_range(0.0..1.0),
-                        );
-
-                        let mat_idx = scene.add_material(render::Material {
-                            diffuse:    albedo,
-                            emmitance:  Vec3A::splat(0.0),
-                            smoothness: 0.0,
-                            radiance:   0.0,
-                        });
-                        builder.append(
-                            render::Object::Sphere {
-                                center,
-                                radius: 0.2,
-                            },
-                            mat_idx,
-                        );
-                    },
-                    0.8.. => {
-                        // Metal
-                        let albedo = Vec3A::new(
-                            rng.gen_range(0.5..1.0),
-                            rng.gen_range(0.5..1.0),
-                            rng.gen_range(0.5..1.0),
-                        );
-                        let smoothness = rng.gen_range(0.0..0.5);
-
-                        let mat_idx = scene.add_material(render::Material {
-                            diffuse: albedo,
-                            emmitance: Vec3A::splat(0.0),
-                            smoothness,
-                            radiance: 0.0,
-                        });
-                        builder.append(
-                            render::Object::Sphere {
-                                center,
-                                radius: 0.2,
-                            },
-                            mat_idx,
-                        );
-                    },
-                    _ => unreachable!(),
-                }
+    for mesh in document.meshes() {
+        for prim in mesh.primitives() {
+            if prim.mode() != Mode::Triangles {
+                continue;
             }
+
+            let reader = prim.reader(|buf| buffers.get(buf.index()).map(|d| &*d.0));
+            let Some(positions) = reader.read_positions() else {
+                println!("No positions attached to triangle mesh");
+                continue;
+            };
+            let positions = positions.collect::<Vec<_>>();
+
+            let Some(normals) = reader.read_normals() else {
+                println!("No normals attached to triangle mesh");
+                continue;
+            };
+            let normals = normals.collect::<Vec<_>>();
+
+            let Some(indices) = reader.read_indices() else {
+                println!("No indices attached to triangle mesh");
+                continue;
+            };
+
+            let mut tris = 0;
+            for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
+                let tri = Object::Triangle {
+                    a: Vertex {
+                        pos:    Vec3A::from_array(positions[a]),
+                        normal: Vec3A::from_array(normals[a]),
+                    },
+                    b: Vertex {
+                        pos:    Vec3A::from_array(positions[b]),
+                        normal: Vec3A::from_array(normals[b]),
+                    },
+                    c: Vertex {
+                        pos:    Vec3A::from_array(positions[c]),
+                        normal: Vec3A::from_array(normals[c]),
+                    },
+                };
+                builder.append(tri, material);
+                tris += 1;
+            }
+            println!("Added mesh with {tris} tris");
         }
     }
 
-    println!("Scene contains {} objects", builder.objects.len());
+    println!("Scene contains {} objects", builder.len());
     scene.add_object(builder.build());
 
     println!("Scene built in {}ms", begin_time.elapsed().as_millis());
@@ -226,11 +182,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let fov = 20f32;
     let focal_length = 10.0;
-    let defocus = 0.6;
+    let defocus = 0.0;
 
-    let camera_position = Vec3A::new(13.0, 2.0, 3.0);
+    let camera_position = Vec3A::new(0.3, 0.2, 0.0);
     let look_at = Vec3A::new(0.0, 0.0, 0.0);
-    let camera_up = Vec3A::new(0.0, 1.0, 0.0);
+    let camera_up = Vec3A::new(0.0, 0.0, -1.0);
 
     let viewport_height = 2f32 * (fov.to_radians() / 2.0).tan() * focal_length;
     let viewport_width = viewport_height * (WIDTH as f32 / HEIGHT as f32);
