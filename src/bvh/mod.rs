@@ -4,6 +4,7 @@
 mod fixed;
 mod tree;
 
+use core::f32;
 use std::arch::x86_64::{
     __m128,
     _mm_blendv_ps,
@@ -45,6 +46,7 @@ impl BoundingBox {
         &self,
         ray: &Ray,
     ) -> Option<f32> {
+        // TODO: Check if blendv is actually any faster than min-max swaps
         let bmin = unsafe {
             Vec3AInternal {
                 i: _mm_blendv_ps(
@@ -66,14 +68,13 @@ impl BoundingBox {
             .v
         };
 
-        let tmin = ((bmin - ray.origin) * ray.inv_dir).max_element();
+        let tmin = ((bmin - ray.origin) * ray.inv_dir).max_element().max(0.0);
         let tmax = ((bmax - ray.origin) * ray.inv_dir).min_element();
 
-        if tmax >= tmin {
-            // TODO: Fix Shadow Acne
-            Some(tmin.max(crate::ACNE_MIN))
-        } else {
+        if tmin > tmax {
             None
+        } else {
+            Some(tmin)
         }
     }
 

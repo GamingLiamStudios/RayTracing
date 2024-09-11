@@ -6,9 +6,14 @@ use std::ops::{
     RangeBounds,
 };
 
-use rayon::iter::{
-    IntoParallelRefIterator,
-    ParallelIterator,
+use rayon::{
+    current_num_threads,
+    iter::{
+        IndexedParallelIterator,
+        IntoParallelIterator,
+        ParallelBridge,
+        ParallelIterator,
+    },
 };
 
 use super::BoundingBox;
@@ -76,61 +81,42 @@ impl StaticBuilder {
             let objects = &self.objects
                 [tree_node.index as usize..tree_node.index as usize + tree_node.objects as usize];
 
-            // For each axis, find part point
-            let mut lowest_cost = None;
-            for axis in 0..3 {
-                // Iterate over all N objects
-                let axis_lowest = objects
-                    .par_iter()
-                    .filter_map(
-                        |(obj, _)| {
-                            // split at axis for Nth object
-                            let split_point = obj.center()[axis];
+            let bins = current_num_threads();
+            let bin_step = tree_node.bounds.max - tree_node.bounds.min;
 
-                            // calculate cost of either side
-                            let (left, left_count, right) = objects.iter().fold(
-                                (BoundingBox::new(), 0, BoundingBox::new()),
-                                |(mut left, mut left_count, mut right), (obj, _)| {
-                                    if obj.center()[axis] > split_point {
-                                        right.grow_to_include(obj);
-                                    } else {
-                                        left.grow_to_include(obj);
-                                        left_count += 1;
-                                    }
-                                    (left, left_count, right)
-                                },
-                            );
-
-                            if left_count == 0
-                                || left_count == u32::try_from(objects.len()).expect("fuck")
-                            {
-                                return None;
+            let lowest_cost = (0..bins)
+                .map(|i| tree_node.bounds.min + bin_step * ((i + 1) as f32 / bins as f32))
+                .par_bridge()
+                .flat_map(|v| v.to_array().into_par_iter().enumerate())
+                .filter_map(|(axis, split_point)| {
+                    // calculate cost of either side
+                    let (left, left_count, right) = objects.iter().fold(
+                        (BoundingBox::new(), 0, BoundingBox::new()),
+                        |(mut left, mut left_count, mut right), (obj, _)| {
+                            if obj.center()[axis] > split_point {
+                                right.grow_to_include(obj);
+                            } else {
+                                left.grow_to_include(obj);
+                                left_count += 1;
                             }
-
-                            let left = f64::from(left.half_surface_area()) * f64::from(left_count);
-                            let right = f64::from(right.half_surface_area())
-                                * f64::from(
-                                    u32::try_from(objects.len()).expect("fuck") - left_count,
-                                );
-                            let total = left + right;
-
-                            Some((total, split_point, axis))
+                            (left, left_count, right)
                         },
-                    )
-                    .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
+                    );
 
-                lowest_cost = match (lowest_cost, axis_lowest) {
-                    (Some((lowest_cost, lowest_split, lowest_axis)), Some((cost, split, axis))) => {
-                        if lowest_cost > cost {
-                            Some((cost, split, axis))
-                        } else {
-                            Some((lowest_cost, lowest_split, lowest_axis))
-                        }
-                    },
-                    (Some(valid), None) | (None, Some(valid)) => Some(valid),
-                    (None, None) => None,
-                };
-            }
+                    let objects_u32 = u32::try_from(objects.len())
+                        .expect("More than u32::MAX objects in StaticBuilder");
+                    if left_count == 0 || left_count == objects_u32 {
+                        return None;
+                    }
+
+                    let left = f64::from(left.half_surface_area()) * f64::from(left_count);
+                    let right =
+                        f64::from(right.half_surface_area()) * f64::from(objects_u32 - left_count);
+                    let total = left + right;
+
+                    Some((total, split_point, axis))
+                })
+                .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
 
             let Some((_, split_point, axis)) = lowest_cost else {
                 // Just leave it
@@ -315,6 +301,7 @@ impl Static {
                     (
                         HitRecord {
                             along: root,
+                            point: intersection_point,
                             normal,
                         },
                         *mat_idx,
@@ -354,7 +341,9 @@ impl Static {
                     (
                         HitRecord {
                             along:  t,
-                            normal: a.normal * u + b.normal * v + c.normal * (1.0 - u - v),
+                            point:  ray.direction * t,
+                            normal: (a.normal * u + b.normal * v + c.normal * (1.0 - u - v))
+                                .normalize_or_zero(),
                         },
                         *mat_idx,
                     )

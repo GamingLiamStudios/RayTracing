@@ -16,21 +16,13 @@ use std::{
 };
 
 use glam::{
+    Affine3A,
+    Quat,
     Vec2,
+    Vec3,
     Vec3A,
 };
-use gltf::{
-    accessor::{
-        DataType,
-        Dimensions,
-    },
-    mesh::{
-        Mode,
-        Reader,
-    },
-    Gltf,
-    Semantic,
-};
+use gltf::mesh::Mode;
 use indicatif::{
     ParallelProgressIterator,
     ProgressBar,
@@ -66,8 +58,8 @@ pub const ACNE_MIN: f32 = 0.01;
 pub const WIDTH: u32 = 800;
 pub const HEIGHT: u32 = 600;
 
-pub const SAMPLES: u32 = 500;
-pub const BOUNCES: usize = 50;
+pub const SAMPLES: u32 = 50;
+pub const BOUNCES: usize = 500;
 
 #[inline]
 pub fn random_unit_circle(rng: &mut ThreadRng) -> Vec2 {
@@ -115,64 +107,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Building scene...");
     let begin_time = std::time::Instant::now();
 
-    let material = Material {
-        diffuse:    Vec3A::splat(0.3),
-        emmitance:  Vec3A::splat(0.0),
-        smoothness: 0.3,
-        radiance:   0.0,
-    };
-    let material = scene.add_material(material);
-    let (document, buffers, _) = gltf::import("models/bunny.glb")?;
+    let bunny_id = {
+        let material = Material {
+            diffuse:    Vec3A::new(0.1, 0.3, 0.3),
+            emmitance:  Vec3A::splat(1.0),
+            smoothness: 0.3,
+            radiance:   0.0,
+        };
+        let material = scene.create_material(material);
+        let (document, buffers, _) = gltf::import("models/bunny.glb")?;
 
-    for mesh in document.meshes() {
-        for prim in mesh.primitives() {
-            if prim.mode() != Mode::Triangles {
-                continue;
-            }
+        for mesh in document.meshes() {
+            for prim in mesh.primitives() {
+                if prim.mode() != Mode::Triangles {
+                    continue;
+                }
 
-            let reader = prim.reader(|buf| buffers.get(buf.index()).map(|d| &*d.0));
-            let Some(positions) = reader.read_positions() else {
-                println!("No positions attached to triangle mesh");
-                continue;
-            };
-            let positions = positions.collect::<Vec<_>>();
-
-            let Some(normals) = reader.read_normals() else {
-                println!("No normals attached to triangle mesh");
-                continue;
-            };
-            let normals = normals.collect::<Vec<_>>();
-
-            let Some(indices) = reader.read_indices() else {
-                println!("No indices attached to triangle mesh");
-                continue;
-            };
-
-            let mut tris = 0;
-            for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
-                let tri = Object::Triangle {
-                    a: Vertex {
-                        pos:    Vec3A::from_array(positions[a]),
-                        normal: Vec3A::from_array(normals[a]),
-                    },
-                    b: Vertex {
-                        pos:    Vec3A::from_array(positions[b]),
-                        normal: Vec3A::from_array(normals[b]),
-                    },
-                    c: Vertex {
-                        pos:    Vec3A::from_array(positions[c]),
-                        normal: Vec3A::from_array(normals[c]),
-                    },
+                let reader = prim.reader(|buf| buffers.get(buf.index()).map(|d| &*d.0));
+                let Some(positions) = reader.read_positions() else {
+                    println!("No positions attached to triangle mesh");
+                    continue;
                 };
-                builder.append(tri, material);
-                tris += 1;
-            }
-            println!("Added mesh with {tris} tris");
-        }
-    }
+                let positions = positions.collect::<Vec<_>>();
 
-    println!("Scene contains {} objects", builder.len());
-    scene.add_object(builder.build());
+                let Some(normals) = reader.read_normals() else {
+                    println!("No normals attached to triangle mesh");
+                    continue;
+                };
+                let normals = normals.collect::<Vec<_>>();
+
+                let Some(indices) = reader.read_indices() else {
+                    println!("No indices attached to triangle mesh");
+                    continue;
+                };
+
+                let mut tris = 0;
+                for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
+                    let tri = Object::Triangle {
+                        a: Vertex {
+                            pos:    Vec3A::from_array(positions[a]),
+                            normal: Vec3A::from_array(normals[a]),
+                        },
+                        b: Vertex {
+                            pos:    Vec3A::from_array(positions[b]),
+                            normal: Vec3A::from_array(normals[b]),
+                        },
+                        c: Vertex {
+                            pos:    Vec3A::from_array(positions[c]),
+                            normal: Vec3A::from_array(normals[c]),
+                        },
+                    };
+                    builder.append(tri, material);
+                    tris += 1;
+                }
+                println!("Added mesh with {tris} tris");
+            }
+        }
+
+        println!("Object contains {} primatives", builder.len());
+        scene.insert_object(
+            builder.build(),
+            Affine3A::from_scale_rotation_translation(
+                Vec3::splat(1.0),
+                Quat::from_euler(
+                    glam::EulerRot::XYZ,
+                    90.0f32.to_radians(),
+                    0.0f32.to_radians(),
+                    90.0f32.to_radians(),
+                ),
+                Vec3::new(-0.3, 0.0, 0.05),
+            ),
+        )
+    };
+
+    scene.add_instance(
+        bunny_id,
+        Affine3A::from_scale_rotation_translation(
+            Vec3::splat(1.0),
+            Quat::from_euler(
+                glam::EulerRot::XYZ,
+                90.0f32.to_radians(),
+                0.0f32.to_radians(),
+                -90.0f32.to_radians(),
+            ),
+            Vec3::new(0.0, 0.0, 0.05),
+        ),
+    );
+
+    let _sphere_id = {
+        // Earth
+        let mut builder = bvh::StaticBuilder::new();
+
+        let object = render::Object::Sphere {
+            center: Vec3A::new(0.0, -1001.0, 0.0),
+            radius: 1000f32,
+        };
+        let material = render::Material {
+            diffuse:    Vec3A::new(0.5, 0.5, 0.5),
+            smoothness: 0f32,
+
+            emmitance: Vec3A::splat(1f32),
+            radiance:  0f32,
+        };
+
+        let material = scene.create_material(material);
+        builder.append(object, material);
+        scene.insert_object(builder.build(), Affine3A::IDENTITY)
+    };
 
     println!("Scene built in {}ms", begin_time.elapsed().as_millis());
 
@@ -182,11 +223,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let fov = 20f32;
     let focal_length = 10.0;
-    let defocus = 0.0;
+    let defocus = 0.00;
 
-    let camera_position = Vec3A::new(0.3, 0.2, 0.0);
-    let look_at = Vec3A::new(0.0, 0.0, 0.0);
-    let camera_up = Vec3A::new(0.0, 0.0, -1.0);
+    let camera_position = Vec3A::new(0.5, 0.12, -0.2);
+    let look_at = Vec3A::new(0.0, 0.02, 0.0);
+    let camera_up = Vec3A::new(0.0, 1.0, 0.0);
 
     let viewport_height = 2f32 * (fov.to_radians() / 2.0).tan() * focal_length;
     let viewport_width = viewport_height * (WIDTH as f32 / HEIGHT as f32);
@@ -226,10 +267,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pixel_center = viewport_origin + x as f32 * delta_u + y as f32 * delta_v;
             //println!("{:?} {:?}", ray.origin, ray.direction);
 
-            let unit_direction = (pixel_center - camera_position).normalize_or_zero();
-            let a = 0.5f32 * (unit_direction.y + 1f32);
-            let sky = Vec3A::splat(1f32) * (1f32 - a) + Vec3A::new(0.5f32, 0.7f32, 1f32) * a;
-
             // TODO: Importance sampling
             let colored = (0..SAMPLES)
                 .par_bridge()
@@ -254,9 +291,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let mut sample_color = Vec3A::splat(0f32);
                         for _ in 0..BOUNCES {
                             // TODO: Better shadow acne handling
-                            let Some((render::HitRecord { along, normal }, mat_idx)) = scene
+                            let Some((
+                                render::HitRecord {
+                                    along,
+                                    point,
+                                    normal,
+                                },
+                                mat_idx,
+                            )) = scene
                                 .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
                             else {
+                                let a = 0.5f32 * (ray.direction.normalize().y + 1f32);
+                                let sky = Vec3A::splat(1f32) * (1f32 - a)
+                                    + Vec3A::new(0.5f32, 0.7f32, 1f32) * a;
                                 sample_color += sky * ray_color;
                                 break;
                             };
@@ -266,11 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                             // Bounce
                             ray.origin += ray.direction * along;
-                            ray.set_direction(material.bounce_ray(
-                                &mut rng,
-                                &ray.direction,
-                                normal,
-                            ));
+                            ray.set_direction(material.bounce_ray(&mut rng, &ray, normal));
 
                             sample_color += material.emmitance * material.radiance * ray_color;
                             ray_color *= material.diffuse;

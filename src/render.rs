@@ -2,9 +2,16 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 
 use core::f32;
-use std::ops::Bound;
+use std::{
+    collections::BTreeMap,
+    ops::Bound,
+};
 
-use glam::Vec3A;
+use glam::{
+    Affine3A,
+    Mat4,
+    Vec3A,
+};
 use rand::{
     rngs::ThreadRng,
     Rng,
@@ -27,7 +34,7 @@ impl Ray {
     ) -> Self {
         Self {
             origin,
-            direction: direction.normalize(),
+            direction,
             inv_dir: 1.0 / direction,
         }
     }
@@ -44,16 +51,19 @@ impl Ray {
 
 pub struct HitRecord {
     pub along:  f32,
+    pub point:  Vec3A,
     pub normal: Vec3A,
 }
 
 slotmap::new_key_type! {
     pub struct MaterialKey;
+    pub struct ObjectKey;
 }
 
 pub struct Scene {
+    // TODO: Make this a Top Level BVH
     pub materials: SlotMap<MaterialKey, Material>,
-    pub objects:   Vec<Static>,
+    pub objects:   SlotMap<ObjectKey, (Static, Vec<Affine3A>)>,
 }
 
 pub struct Material {
@@ -106,23 +116,35 @@ pub fn random_unit_sphere(rng: &mut ThreadRng) -> Vec3A {
 impl Scene {
     pub fn new() -> Self {
         Self {
-            objects:   Vec::new(),
+            objects:   SlotMap::with_key(),
             materials: SlotMap::with_key(),
         }
     }
 
-    pub fn add_material(
+    pub fn create_material(
         &mut self,
         mat: Material,
     ) -> MaterialKey {
         self.materials.insert(mat)
     }
 
-    pub fn add_object(
+    pub fn insert_object(
         &mut self,
         object: Static,
+        transform: Affine3A,
+    ) -> ObjectKey {
+        self.objects.insert((object, vec![transform]))
+    }
+
+    pub fn add_instance(
+        &mut self,
+        object: ObjectKey,
+        transform: Affine3A,
     ) {
-        self.objects.push(object);
+        let Some((_, instances)) = self.objects.get_mut(object) else {
+            return;
+        };
+        instances.push(transform);
     }
 
     pub fn material(
@@ -139,13 +161,21 @@ impl Scene {
     ) -> Option<(HitRecord, MaterialKey)> {
         let mut closest = None;
 
-        for bvh in &self.objects {
-            let Some(hit) = bvh.hit_scene(ray, search_range) else {
-                continue;
-            };
+        for (bvh, transforms) in self.objects.values() {
+            for transform in transforms {
+                let transformed_ray = Ray::new(
+                    transform.inverse().transform_point3a(ray.origin),
+                    transform.inverse().transform_vector3a(ray.direction),
+                );
+                let Some(mut hit) = bvh.hit_scene(&transformed_ray, search_range) else {
+                    continue;
+                };
 
-            search_range.1 = Bound::Included(hit.0.along);
-            closest = Some(hit);
+                hit.0.point = transform.transform_point3a(hit.0.point);
+
+                search_range.1 = Bound::Included(hit.0.along);
+                closest = Some(hit);
+            }
         }
 
         closest
@@ -156,15 +186,11 @@ impl Material {
     pub fn bounce_ray(
         &self,
         rng: &mut ThreadRng,
-        incoming: &Vec3A,
+        ray: &Ray,
         normal: Vec3A,
     ) -> Vec3A {
-        let mut diffuse = (normal + random_unit_sphere(rng)).normalize();
-        if diffuse.length_squared() <= f32::EPSILON {
-            println!("Near zero diffuse");
-            diffuse = normal;
-        }
-        let specular = incoming.reflect(normal);
+        let diffuse = ray.origin + normal + random_unit_sphere(rng);
+        let specular = ray.direction.normalize().reflect(normal);
         diffuse.lerp(specular, self.smoothness)
     }
 }
