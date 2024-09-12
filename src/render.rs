@@ -2,14 +2,10 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 
 use core::f32;
-use std::{
-    collections::BTreeMap,
-    ops::Bound,
-};
+use std::ops::Bound;
 
 use glam::{
     Affine3A,
-    Mat4,
     Vec3A,
 };
 use rand::{
@@ -51,7 +47,6 @@ impl Ray {
 
 pub struct HitRecord {
     pub along:  f32,
-    pub point:  Vec3A,
     pub normal: Vec3A,
 }
 
@@ -60,12 +55,20 @@ slotmap::new_key_type! {
     pub struct ObjectKey;
 }
 
+#[derive(Debug)]
+pub struct Instance {
+    transform: Affine3A,
+    materials: Vec<MaterialKey>,
+}
+
+#[derive(Debug)]
 pub struct Scene {
     // TODO: Make this a Top Level BVH
     pub materials: SlotMap<MaterialKey, Material>,
-    pub objects:   SlotMap<ObjectKey, (Static, Vec<Affine3A>)>,
+    pub objects:   SlotMap<ObjectKey, (Static, Vec<Instance>)>,
 }
 
+#[derive(Debug)]
 pub struct Material {
     pub diffuse:   Vec3A,
     pub emmitance: Vec3A,
@@ -74,7 +77,7 @@ pub struct Material {
     pub radiance:   f32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Vertex {
     pub(crate) pos:    Vec3A,
     pub(crate) normal: Vec3A,
@@ -82,7 +85,7 @@ pub struct Vertex {
 }
 
 // TODO: Benchmark differences between Enum and Trait for storing render objects
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Object {
     // TODO: Support Ellipsoid
     Sphere { center: Vec3A, radius: f32 },
@@ -132,19 +135,34 @@ impl Scene {
         &mut self,
         object: Static,
         transform: Affine3A,
+        materials: Vec<MaterialKey>,
     ) -> ObjectKey {
-        self.objects.insert((object, vec![transform]))
+        let objects = object.objects.len();
+        let id = self.objects.insert((object, vec![Instance {
+            transform,
+            materials,
+        }]));
+        let (scale, rotation, translation) = transform.to_scale_rotation_translation();
+        tracing::debug!(?id, objects, instances = 1, transform.scale = ?scale, transform.rotation = ?rotation, transform.translation = ?translation);
+        id
     }
 
     pub fn add_instance(
         &mut self,
         object: ObjectKey,
         transform: Affine3A,
+        materials: Vec<MaterialKey>,
     ) {
         let Some((_, instances)) = self.objects.get_mut(object) else {
             return;
         };
-        instances.push(transform);
+        instances.push(Instance {
+            transform,
+            materials,
+        });
+
+        let (scale, rotation, translation) = transform.to_scale_rotation_translation();
+        tracing::debug!(id = ?object, instances = instances.len(), transform.scale = ?scale, transform.rotation = ?rotation, transform.translation = ?translation);
     }
 
     pub fn material(
@@ -162,19 +180,22 @@ impl Scene {
         let mut closest = None;
 
         for (bvh, transforms) in self.objects.values() {
-            for transform in transforms {
+            for Instance {
+                transform,
+                materials,
+            } in transforms
+            {
                 let transformed_ray = Ray::new(
                     transform.inverse().transform_point3a(ray.origin),
                     transform.inverse().transform_vector3a(ray.direction),
                 );
-                let Some(mut hit) = bvh.hit_scene(&transformed_ray, search_range) else {
+                let Some((hit_record, material)) = bvh.hit_scene(&transformed_ray, search_range)
+                else {
                     continue;
                 };
 
-                hit.0.point = transform.transform_point3a(hit.0.point);
-
-                search_range.1 = Bound::Included(hit.0.along);
-                closest = Some(hit);
+                search_range.1 = Bound::Included(hit_record.along);
+                closest = Some((hit_record, materials[material]));
             }
         }
 

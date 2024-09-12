@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: LGPL-2.1-only
 
 mod fixed;
-mod tree;
 
 use core::f32;
 use std::arch::x86_64::{
@@ -47,6 +46,8 @@ impl BoundingBox {
         ray: &Ray,
     ) -> Option<f32> {
         // TODO: Check if blendv is actually any faster than min-max swaps
+        // Theoretically should be faster according to intel docs
+        // (4 vs 2 latency, .5 vs .66 throughput)
         let bmin = unsafe {
             Vec3AInternal {
                 i: _mm_blendv_ps(

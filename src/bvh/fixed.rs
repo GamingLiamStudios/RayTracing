@@ -19,13 +19,12 @@ use rayon::{
 use super::BoundingBox;
 use crate::render::{
     HitRecord,
-    MaterialKey,
     Object,
     Ray,
 };
 
 pub struct StaticBuilder {
-    objects:     Vec<(Object, MaterialKey)>,
+    objects:     Vec<(Object, usize)>,
     root_bounds: BoundingBox,
 }
 
@@ -46,7 +45,7 @@ impl StaticBuilder {
     pub fn append(
         &mut self,
         object: Object,
-        material: MaterialKey,
+        material: usize,
     ) -> &mut Self {
         self.root_bounds.grow_to_include(&object);
         self.objects.push((object, material));
@@ -56,6 +55,8 @@ impl StaticBuilder {
     #[allow(clippy::cast_precision_loss)]
     #[allow(clippy::too_many_lines)]
     pub fn build(mut self) -> Static {
+        tracing::trace!(num_objects = self.objects.len(), bounds = ?self.root_bounds);
+
         // Top-down building - divide and conquer
         let mut tree = vec![BvhNode {
             bounds:  self.root_bounds,
@@ -67,6 +68,9 @@ impl StaticBuilder {
         let mut depth_sum = 0;
         let mut max_depth = usize::MIN;
 
+        // TODO: Further subdivide this w/ rayon::join or something
+        // would have to like store jump offsets instead of indices into the tree array
+        // + since we use rayon internally, idefk if it'll make it faster
         let mut search_nodes = vec![(0, 0)];
         while let Some((idx, depth)) = search_nodes.pop() {
             let tree_node = &tree[idx];
@@ -109,19 +113,18 @@ impl StaticBuilder {
                         return None;
                     }
 
-                    let left = f64::from(left.half_surface_area()) * f64::from(left_count);
-                    let right =
+                    let left_sa = f64::from(left.half_surface_area()) * f64::from(left_count);
+                    let right_sa =
                         f64::from(right.half_surface_area()) * f64::from(objects_u32 - left_count);
-                    let total = left + right;
 
-                    Some((total, split_point, axis))
+                    Some((left_sa + right_sa, split_point, axis, left, right))
                 })
                 .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
 
-            let Some((_, split_point, axis)) = lowest_cost else {
+            let Some((_, split_point, axis, left, right)) = lowest_cost else {
                 // Just leave it
-                println!(
-                    "Couldn't split further. size {} leaf exists",
+                tracing::warn!(
+                    "Couldn't split further. Size {} leaf exists",
                     tree_node.objects
                 );
                 leaf += 1;
@@ -134,19 +137,28 @@ impl StaticBuilder {
                 [tree_node.index as usize..tree_node.index as usize + tree_node.objects as usize];
 
             let mut right_start = 0;
-            let mut left = BoundingBox::new();
-            let mut right = BoundingBox::new();
             for i in 0..tree_node.objects {
                 let (obj, _) = &objects[i as usize];
-
                 if obj.center()[axis] > split_point {
-                    right.grow_to_include(obj);
-                } else {
-                    left.grow_to_include(obj);
-                    objects.swap(right_start as usize, i as usize);
-                    right_start += 1;
+                    continue;
                 }
+
+                objects.swap(right_start as usize, i as usize);
+                right_start += 1;
             }
+
+            tracing::trace!(
+                depth,
+                split_point,
+                axis = match axis {
+                    0 => "Axis::X",
+                    1 => "Axis::Y",
+                    2 => "Axis::Z",
+                    _ => unreachable!(),
+                },
+                left = right_start,
+                right = tree_node.objects - right_start,
+            );
 
             search_nodes.push((tree.len(), depth + 1));
             search_nodes.push((tree.len() + 1, depth + 1));
@@ -170,10 +182,11 @@ impl StaticBuilder {
             tree[idx].objects = 0;
         }
 
-        println!("{} BVH nodes generated", tree.len());
-        println!(
-            "{leaf} Leafs generated\n\t- Avg Depth: {:.2}\n\t- Max Depth: {max_depth}",
-            depth_sum as f64 / leaf as f64
+        tracing::debug!(
+            nodes = tree.len(),
+            leaves = leaf,
+            avg_depth = depth_sum as f64 / leaf as f64,
+            max_depth
         );
 
         Static {
@@ -183,9 +196,7 @@ impl StaticBuilder {
     }
 }
 
-// TODO: Investigate perf difference of Binary vs B-trees
-// since RAM is quite fast and we aren't doing static building (hopefully)
-// it Binary trees should roughly be as fast?
+// TODO: Investigate cache alignment (move BB to Vec3?)
 #[derive(Debug)]
 struct BvhNode {
     bounds:  BoundingBox,
@@ -193,9 +204,10 @@ struct BvhNode {
     index:   u32,
 }
 
+#[derive(Debug)]
 pub struct Static {
-    objects: Vec<(Object, MaterialKey)>,
-    tree:    Vec<BvhNode>,
+    pub(crate) objects: Vec<(Object, usize)>,
+    tree:               Vec<BvhNode>,
 }
 
 impl Static {
@@ -203,17 +215,24 @@ impl Static {
         &self,
         ray: &Ray,
         mut search_range: (Bound<f32>, Bound<f32>),
-    ) -> Option<(HitRecord, MaterialKey)> {
+    ) -> Option<(HitRecord, usize)> {
         let mut closest = None;
 
         // Probably good to do a quick check here with root node
         // Since loop below doesn't actually do any checks for the root node
         self.tree[0].bounds.intersects(ray)?;
 
-        let mut search_space = vec![0];
-        while let Some(next_search) = search_space.pop() {
+        let mut max_depth_searched = 0;
+        let mut hit_depth = 0;
+        let mut boxes_tested = 1;
+        let mut prims_tested = 0;
+
+        let mut search_space = vec![(0, 1)];
+        while let Some((next_search, depth)) = search_space.pop() {
             let node = &self.tree[next_search];
             let index = node.index as usize;
+
+            max_depth_searched = max_depth_searched.max(depth);
 
             // Is this a leaf node?
             if node.objects > 0 {
@@ -222,6 +241,9 @@ impl Static {
                 else {
                     continue;
                 };
+
+                prims_tested += node.objects as usize;
+                hit_depth = depth;
 
                 search_range.1 = Bound::Included(new_closest.0.along);
                 closest = Some(new_closest);
@@ -232,6 +254,8 @@ impl Static {
             //println!();
             let mut closest = None;
             for node_idx in index..index + 2 {
+                boxes_tested += 1;
+
                 let Some(next_intersect) = self.tree[node_idx].bounds.intersects(ray) else {
                     continue;
                 };
@@ -242,7 +266,7 @@ impl Static {
 
                 //println!("{node_idx} {next_intersect} {closest:?}");
 
-                search_space.push(node_idx);
+                search_space.push((node_idx, depth + 1));
                 let Some(prev_intersect) = closest else {
                     closest = Some(next_intersect);
                     continue;
@@ -259,6 +283,8 @@ impl Static {
             //println!("{:?}", &search_space);
         }
 
+        tracing::trace!(max_depth_searched, hit_depth, boxes_tested, prims_tested);
+
         closest
     }
 
@@ -268,7 +294,7 @@ impl Static {
         mut search_range: (Bound<f32>, Bound<f32>),
         start: usize,
         len: usize,
-    ) -> Option<(HitRecord, MaterialKey)> {
+    ) -> Option<(HitRecord, usize)> {
         let mut closest = None;
 
         for (obj, mat_idx) in &self.objects[start..start + len] {
@@ -301,7 +327,6 @@ impl Static {
                     (
                         HitRecord {
                             along: root,
-                            point: intersection_point,
                             normal,
                         },
                         *mat_idx,
@@ -341,7 +366,6 @@ impl Static {
                     (
                         HitRecord {
                             along:  t,
-                            point:  ray.direction * t,
                             normal: (a.normal * u + b.normal * v + c.normal * (1.0 - u - v))
                                 .normalize_or_zero(),
                         },

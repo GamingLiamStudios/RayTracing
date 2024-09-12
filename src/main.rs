@@ -43,11 +43,6 @@ use render::{
     Vertex,
 };
 use rgb::Rgb;
-use tracing::{
-    event,
-    info,
-    instrument,
-};
 
 mod bvh;
 mod render;
@@ -97,125 +92,149 @@ fn process_ray(mut input: Vec3A) -> Rgb<u16> {
 #[allow(clippy::many_single_char_names)]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fmt_subscriber = tracing_subscriber::fmt::Subscriber::builder()
-        .with_max_level(tracing::Level::TRACE)
+        .with_max_level(tracing::Level::DEBUG)
         .finish();
     tracing::subscriber::set_global_default(fmt_subscriber)?;
 
     let mut scene = render::Scene::new();
     let mut builder = bvh::StaticBuilder::new();
 
-    println!("Building scene...");
-    let begin_time = std::time::Instant::now();
+    tracing::debug_span!("PrimarySceneBuild").in_scope(|| {
+        tracing::info!("Building Scene...");
+        let begin_time = std::time::Instant::now();
 
-    let bunny_id = {
-        let material = Material {
-            diffuse:    Vec3A::new(0.1, 0.3, 0.3),
-            emmitance:  Vec3A::splat(1.0),
-            smoothness: 0.3,
-            radiance:   0.0,
+        let bunny1_mat = {
+            let material = Material {
+                diffuse:    Vec3A::new(0.1, 0.3, 0.3),
+                emmitance:  Vec3A::splat(1.0),
+                smoothness: 0.3,
+                radiance:   0.0,
+            };
+            scene.create_material(material)
         };
-        let material = scene.create_material(material);
-        let (document, buffers, _) = gltf::import("models/bunny.glb")?;
 
-        for mesh in document.meshes() {
-            for prim in mesh.primitives() {
-                if prim.mode() != Mode::Triangles {
-                    continue;
-                }
+        let bunny_id = {
+            let bunny_span = tracing::debug_span!("BunnyModel");
+            let _guard = bunny_span.enter();
 
-                let reader = prim.reader(|buf| buffers.get(buf.index()).map(|d| &*d.0));
-                let Some(positions) = reader.read_positions() else {
-                    println!("No positions attached to triangle mesh");
-                    continue;
-                };
-                let positions = positions.collect::<Vec<_>>();
+            let (document, buffers, _) =
+                gltf::import("models/dragon.glb").expect("Failed to load model");
 
-                let Some(normals) = reader.read_normals() else {
-                    println!("No normals attached to triangle mesh");
-                    continue;
-                };
-                let normals = normals.collect::<Vec<_>>();
+            for mesh in document.meshes() {
+                for prim in mesh.primitives() {
+                    if prim.mode() != Mode::Triangles {
+                        continue;
+                    }
 
-                let Some(indices) = reader.read_indices() else {
-                    println!("No indices attached to triangle mesh");
-                    continue;
-                };
-
-                let mut tris = 0;
-                for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
-                    let tri = Object::Triangle {
-                        a: Vertex {
-                            pos:    Vec3A::from_array(positions[a]),
-                            normal: Vec3A::from_array(normals[a]),
-                        },
-                        b: Vertex {
-                            pos:    Vec3A::from_array(positions[b]),
-                            normal: Vec3A::from_array(normals[b]),
-                        },
-                        c: Vertex {
-                            pos:    Vec3A::from_array(positions[c]),
-                            normal: Vec3A::from_array(normals[c]),
-                        },
+                    let reader = prim.reader(|buf| buffers.get(buf.index()).map(|d| &*d.0));
+                    let Some(positions) = reader.read_positions() else {
+                        tracing::warn!("No positions attached to triangle mesh");
+                        continue;
                     };
-                    builder.append(tri, material);
-                    tris += 1;
-                }
-                println!("Added mesh with {tris} tris");
-            }
-        }
+                    let positions = positions.collect::<Vec<_>>();
 
-        println!("Object contains {} primatives", builder.len());
-        scene.insert_object(
-            builder.build(),
+                    let Some(normals) = reader.read_normals() else {
+                        tracing::warn!("No normals attached to triangle mesh");
+                        continue;
+                    };
+                    let normals = normals.collect::<Vec<_>>();
+
+                    let Some(indices) = reader.read_indices() else {
+                        tracing::warn!("No indices attached to triangle mesh");
+                        continue;
+                    };
+
+                    tracing::trace!(num_positions = positions.len(), num_normals = normals.len());
+
+                    let mut tris = 0;
+                    for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
+                        let tri = Object::Triangle {
+                            a: Vertex {
+                                pos:    Vec3A::from_array(positions[a]),
+                                normal: Vec3A::from_array(normals[a]),
+                            },
+                            b: Vertex {
+                                pos:    Vec3A::from_array(positions[b]),
+                                normal: Vec3A::from_array(normals[b]),
+                            },
+                            c: Vertex {
+                                pos:    Vec3A::from_array(positions[c]),
+                                normal: Vec3A::from_array(normals[c]),
+                            },
+                        };
+                        builder.append(tri, 0);
+                        tris += 1;
+                    }
+
+                    tracing::trace!(tris, "Mesh contains {} triangles", tris);
+                }
+            }
+
+            tracing::trace!(num_primatives = builder.len());
+            scene.insert_object(
+                builder.build(),
+                Affine3A::from_scale_rotation_translation(
+                    Vec3::splat(1.0),
+                    Quat::from_euler(
+                        glam::EulerRot::XYZ,
+                        90.0f32.to_radians(),
+                        0.0f32.to_radians(),
+                        90.0f32.to_radians(),
+                    ),
+                    Vec3::new(-0.3, 0.0, 0.05),
+                ),
+                vec![bunny1_mat],
+            )
+        };
+
+        let bunny2_mat = {
+            let material = Material {
+                diffuse:    Vec3A::new(0.7, 0.3, 0.3),
+                emmitance:  Vec3A::splat(1.0),
+                smoothness: 0.3,
+                radiance:   0.0,
+            };
+            scene.create_material(material)
+        };
+
+        scene.add_instance(
+            bunny_id,
             Affine3A::from_scale_rotation_translation(
                 Vec3::splat(1.0),
                 Quat::from_euler(
                     glam::EulerRot::XYZ,
                     90.0f32.to_radians(),
                     0.0f32.to_radians(),
-                    90.0f32.to_radians(),
+                    -90.0f32.to_radians(),
                 ),
-                Vec3::new(-0.3, 0.0, 0.05),
+                Vec3::new(0.0, 0.0, 0.05),
             ),
-        )
-    };
+            vec![bunny2_mat],
+        );
 
-    scene.add_instance(
-        bunny_id,
-        Affine3A::from_scale_rotation_translation(
-            Vec3::splat(1.0),
-            Quat::from_euler(
-                glam::EulerRot::XYZ,
-                90.0f32.to_radians(),
-                0.0f32.to_radians(),
-                -90.0f32.to_radians(),
-            ),
-            Vec3::new(0.0, 0.0, 0.05),
-        ),
-    );
+        let _sphere_id = {
+            // Earth
+            let mut builder = bvh::StaticBuilder::new();
 
-    let _sphere_id = {
-        // Earth
-        let mut builder = bvh::StaticBuilder::new();
+            let object = render::Object::Sphere {
+                center: Vec3A::new(0.0, -1001.0, 0.0),
+                radius: 1000f32,
+            };
+            let material = render::Material {
+                diffuse:    Vec3A::new(0.5, 0.5, 0.5),
+                smoothness: 0f32,
 
-        let object = render::Object::Sphere {
-            center: Vec3A::new(0.0, -1001.0, 0.0),
-            radius: 1000f32,
-        };
-        let material = render::Material {
-            diffuse:    Vec3A::new(0.5, 0.5, 0.5),
-            smoothness: 0f32,
+                emmitance: Vec3A::splat(1f32),
+                radiance:  0f32,
+            };
 
-            emmitance: Vec3A::splat(1f32),
-            radiance:  0f32,
+            let material = scene.create_material(material);
+            builder.append(object, 0);
+            scene.insert_object(builder.build(), Affine3A::IDENTITY, vec![material])
         };
 
-        let material = scene.create_material(material);
-        builder.append(object, material);
-        scene.insert_object(builder.build(), Affine3A::IDENTITY)
-    };
-
-    println!("Scene built in {}ms", begin_time.elapsed().as_millis());
+        tracing::info!(elapsed = ?begin_time.elapsed(), "Scene Built in {:.2}s", begin_time.elapsed().as_secs_f32());
+    });
 
     let sample_ratio = 1f32 / SAMPLES as f32;
 
@@ -250,105 +269,110 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let defocus_u = focal_u * defocus_radi;
     let defocus_v = focal_v * defocus_radi;
 
-    println!("Beginning render");
-    let begin_time = std::time::Instant::now();
+    tracing::info_span!("SceneRender").in_scope(|| {
+        tracing::info!(width = WIDTH, height = HEIGHT, "Beginning render of size {WIDTH}x{HEIGHT}");
+        tracing::debug!(?camera_position, ?look_at, ?camera_up, fov, focal_length, defocus);
 
-    let bar = ProgressBar::new(u64::from(HEIGHT) * u64::from(WIDTH));
+        let begin_time = std::time::Instant::now();
 
-    //let mut rng = rand::thread_rng();
-    render_buffer
-        .par_iter_mut()
-        .enumerate()
-        .progress_with(bar)
-        .for_each(|(idx, px)| {
-            let y = idx / WIDTH as usize;
-            let x = idx % WIDTH as usize;
+        //let mut rng = rand::thread_rng();
+        render_buffer
+            .par_iter_mut()
+            .enumerate()
+            .progress_with(ProgressBar::new(u64::from(HEIGHT) * u64::from(WIDTH)))
+            .for_each(|(idx, px)| {
+                let y = idx / WIDTH as usize;
+                let x = idx % WIDTH as usize;
 
-            let pixel_center = viewport_origin + x as f32 * delta_u + y as f32 * delta_v;
-            //println!("{:?} {:?}", ray.origin, ray.direction);
+                let pixel_center = viewport_origin + x as f32 * delta_u + y as f32 * delta_v;
+                //println!("{:?} {:?}", ray.origin, ray.direction);
 
-            // TODO: Importance sampling
-            let colored = (0..SAMPLES)
-                .par_bridge()
-                .fold(
-                    || Vec3A::splat(0f32),
-                    |colored, _| {
-                        let mut rng = rand::thread_rng();
+                // TODO: Importance sampling
+                let colored = (0..SAMPLES)
+                    .par_bridge()
+                    .fold(
+                        || Vec3A::splat(0f32),
+                        |colored, _| {
+                            let mut rng = rand::thread_rng();
 
-                        let aa_shift =
-                            rng.gen_range(-0.5..0.5) * delta_u + rng.gen_range(-0.5..0.5) * delta_v;
-                        let origin = camera_position
-                            + if defocus_radi <= 0.0 {
-                                Vec3A::splat(0.0)
-                            } else {
-                                let rand_circ = random_unit_circle(&mut rng);
-                                defocus_u * rand_circ.x + defocus_v * rand_circ.y
-                            };
+                            let aa_shift = rng.gen_range(-0.5..0.5) * delta_u
+                                + rng.gen_range(-0.5..0.5) * delta_v;
+                            let origin = camera_position
+                                + if defocus_radi <= 0.0 {
+                                    Vec3A::splat(0.0)
+                                } else {
+                                    let rand_circ = random_unit_circle(&mut rng);
+                                    defocus_u * rand_circ.x + defocus_v * rand_circ.y
+                                };
 
-                        let mut ray = render::Ray::new(origin, pixel_center + aa_shift - origin);
+                            let mut ray =
+                                render::Ray::new(origin, pixel_center + aa_shift - origin);
 
-                        let mut ray_color = Vec3A::splat(1f32);
-                        let mut sample_color = Vec3A::splat(0f32);
-                        for _ in 0..BOUNCES {
-                            // TODO: Better shadow acne handling
-                            let Some((
-                                render::HitRecord {
-                                    along,
-                                    point,
-                                    normal,
-                                },
-                                mat_idx,
-                            )) = scene
-                                .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
-                            else {
-                                let a = 0.5f32 * (ray.direction.normalize().y + 1f32);
-                                let sky = Vec3A::splat(1f32) * (1f32 - a)
-                                    + Vec3A::new(0.5f32, 0.7f32, 1f32) * a;
-                                sample_color += sky * ray_color;
-                                break;
-                            };
+                            let mut ray_color = Vec3A::splat(1f32);
+                            let mut sample_color = Vec3A::splat(0f32);
+                            let mut bounces = 0;
+                            for _ in 0..BOUNCES {
+                                bounces += 1;
 
-                            let material =
-                                scene.material(mat_idx).expect("Material does not exist");
+                                // TODO: Better shadow acne handling
+                                let Some((render::HitRecord { along, normal }, mat_idx)) = scene
+                                    .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
+                                else {
+                                    let a = 0.5f32 * (ray.direction.normalize().y + 1f32);
+                                    let sky = Vec3A::splat(1f32) * (1f32 - a)
+                                        + Vec3A::new(0.5f32, 0.7f32, 1f32) * a;
+                                    sample_color += sky * ray_color;
+                                    break;
+                                };
 
-                            // Bounce
-                            ray.origin += ray.direction * along;
-                            ray.set_direction(material.bounce_ray(&mut rng, &ray, normal));
+                                let material =
+                                    scene.material(mat_idx).expect("Material does not exist");
 
-                            sample_color += material.emmitance * material.radiance * ray_color;
-                            ray_color *= material.diffuse;
-                        }
+                                // Bounce
+                                ray.origin += ray.direction * along;
+                                ray.set_direction(material.bounce_ray(&mut rng, &ray, normal));
 
-                        colored + sample_color * sample_ratio
-                    },
-                )
-                .sum();
+                                sample_color += material.emmitance * material.radiance * ray_color;
+                                ray_color *= material.diffuse;
+                            }
 
-            *px = process_ray(colored);
-            //bar.inc(1);
-        });
+                            tracing::trace!(bounces);
+                            colored + sample_color * sample_ratio
+                        },
+                    )
+                    .sum();
 
-    //bar.finish_and_clear();
+                *px = process_ray(colored);
+                //bar.inc(1);
+            });
 
-    println!("Rendered in {:.2}s", begin_time.elapsed().as_secs_f32());
+        //bar.finish_and_clear();
+
+        tracing::info!(elapsed = ?begin_time.elapsed(), "Scene Rendered in {:.2}s", begin_time.elapsed().as_secs_f32());
+    });
 
     // Write results to a PNG
-    let mut encoder = png::Encoder::new(std::fs::File::create("render.png")?, WIDTH, HEIGHT);
-    encoder.set_color(png::ColorType::Rgb);
-    encoder.set_depth(png::BitDepth::Sixteen);
-    encoder.set_source_gamma(png::ScaledFloat::new(1.0 / 1.8));
-    encoder.set_srgb(png::SrgbRenderingIntent::Perceptual);
-    let mut writer = encoder.write_header()?;
-    let mut stream = writer.stream_writer()?;
+    tracing::debug_span!("FileWriter::PNG").in_scope(|| {
+        let path = std::fs::File::create("render.png")?;
+        tracing::info!(?path, "Writing render to file {path:?}");
 
-    // Hopefully this gets optimized properly by the compiler to some AVX
-    for px in bytemuck::must_cast_slice::<_, u16>(&render_buffer) {
-        let bytes_written = stream.write(&px.to_be_bytes())?;
-        debug_assert!(bytes_written == size_of::<u16>());
-    }
+        let mut encoder = png::Encoder::new(path, WIDTH, HEIGHT);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Sixteen);
+        encoder.set_source_gamma(png::ScaledFloat::new(1.0 / 1.8));
+        encoder.set_srgb(png::SrgbRenderingIntent::Perceptual);
+        let mut writer = encoder.write_header()?;
+        let mut stream = writer.stream_writer()?;
 
-    stream.finish()?;
-    writer.finish()?;
+        // Hopefully this gets optimized properly by the compiler to some AVX
+        for px in bytemuck::must_cast_slice::<_, u16>(&render_buffer) {
+            let bytes_written = stream.write(&px.to_be_bytes())?;
+            debug_assert!(bytes_written == size_of::<u16>());
+        }
 
-    Ok(())
+        stream.finish()?;
+        writer.finish()?;
+
+        Ok(())
+    })
 }
