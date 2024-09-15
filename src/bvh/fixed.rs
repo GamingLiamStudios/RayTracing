@@ -71,7 +71,7 @@ impl StaticBuilder {
         // TODO: Further subdivide this w/ rayon::join or something
         // would have to like store jump offsets instead of indices into the tree array
         // + since we use rayon internally, idefk if it'll make it faster
-        let mut search_nodes = vec![(0, 0)];
+        let mut search_nodes = vec![(0, 1)];
         while let Some((idx, depth)) = search_nodes.pop() {
             let tree_node = &tree[idx];
             if tree_node.objects <= Self::BVH_MAX_LEAF {
@@ -89,7 +89,7 @@ impl StaticBuilder {
             let bin_step = tree_node.bounds.max - tree_node.bounds.min;
 
             let lowest_cost = (0..bins)
-                .map(|i| tree_node.bounds.min + bin_step * ((i + 1) as f32 / bins as f32))
+                .map(|i| tree_node.bounds.min + bin_step * ((i + 1) as f64 / bins as f64))
                 .par_bridge()
                 .flat_map(|v| v.to_array().into_par_iter().enumerate())
                 .filter_map(|(axis, split_point)| {
@@ -113,9 +113,8 @@ impl StaticBuilder {
                         return None;
                     }
 
-                    let left_sa = f64::from(left.half_surface_area()) * f64::from(left_count);
-                    let right_sa =
-                        f64::from(right.half_surface_area()) * f64::from(objects_u32 - left_count);
+                    let left_sa = left.half_surface_area() * f64::from(left_count);
+                    let right_sa = right.half_surface_area() * f64::from(objects_u32 - left_count);
 
                     Some((left_sa + right_sa, split_point, axis, left, right))
                 })
@@ -214,7 +213,7 @@ impl Static {
     pub fn hit_scene(
         &self,
         ray: &Ray,
-        mut search_range: (Bound<f32>, Bound<f32>),
+        mut search_range: (Bound<f64>, Bound<f64>),
     ) -> Option<(HitRecord, usize)> {
         let mut closest = None;
 
@@ -291,7 +290,7 @@ impl Static {
     fn hit_closest(
         &self,
         ray: &Ray,
-        mut search_range: (Bound<f32>, Bound<f32>),
+        mut search_range: (Bound<f64>, Bound<f64>),
         start: usize,
         len: usize,
     ) -> Option<(HitRecord, usize)> {
@@ -306,7 +305,7 @@ impl Static {
                     let c = radius.mul_add(-radius, offset_origin.length_squared());
 
                     let discrim = h.mul_add(h, -(a * c));
-                    if discrim < 0f32 {
+                    if discrim < 0.0 {
                         continue;
                     }
 
@@ -339,7 +338,7 @@ impl Static {
                     let ray_cross_e2 = ray.direction.cross(e2);
                     let det = e1.dot(ray_cross_e2);
 
-                    if det > -f32::EPSILON && det < f32::EPSILON {
+                    if (-f64::EPSILON..f64::EPSILON).contains(&det) {
                         continue; // This ray is parallel to this triangle.
                     }
 
@@ -359,7 +358,7 @@ impl Static {
                     // At this stage we can compute t to find out where the intersection point is on
                     // the line.
                     let t = inv_det * e2.dot(s_cross_e1);
-                    if t < f32::EPSILON {
+                    if !search_range.contains(&t) {
                         continue;
                     }
 

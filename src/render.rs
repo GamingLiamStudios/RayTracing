@@ -1,12 +1,12 @@
 // Copyright (C) 2024 GLStudios
 // SPDX-License-Identifier: LGPL-2.1-only
 
-use core::f32;
+use core::f64;
 use std::ops::Bound;
 
 use glam::{
-    Affine3A,
-    Vec3A,
+    DAffine3,
+    DVec3,
 };
 use rand::{
     rngs::ThreadRng,
@@ -18,15 +18,15 @@ use crate::bvh::Static;
 
 #[derive(Clone, Copy)]
 pub struct Ray {
-    pub origin:    Vec3A,
-    pub direction: Vec3A,
-    pub inv_dir:   Vec3A,
+    pub origin:    DVec3,
+    pub direction: DVec3,
+    pub inv_dir:   DVec3,
 }
 
 impl Ray {
     pub fn new(
-        origin: Vec3A,
-        direction: Vec3A,
+        origin: DVec3,
+        direction: DVec3,
     ) -> Self {
         Self {
             origin,
@@ -38,7 +38,7 @@ impl Ray {
     #[inline]
     pub fn set_direction(
         &mut self,
-        new: Vec3A,
+        new: DVec3,
     ) {
         self.direction = new;
         self.inv_dir = 1.0 / self.direction;
@@ -46,8 +46,8 @@ impl Ray {
 }
 
 pub struct HitRecord {
-    pub along:  f32,
-    pub normal: Vec3A,
+    pub along:  f64,
+    pub normal: DVec3,
 }
 
 slotmap::new_key_type! {
@@ -57,7 +57,7 @@ slotmap::new_key_type! {
 
 #[derive(Debug)]
 pub struct Instance {
-    transform: Affine3A,
+    transform: DAffine3,
     materials: Vec<MaterialKey>,
 }
 
@@ -70,30 +70,30 @@ pub struct Scene {
 
 #[derive(Debug)]
 pub struct Material {
-    pub diffuse:   Vec3A,
-    pub emmitance: Vec3A,
+    pub diffuse:   DVec3,
+    pub emmitance: DVec3,
 
-    pub smoothness: f32,
-    pub radiance:   f32,
+    pub smoothness: f64,
+    pub radiance:   f64,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct Vertex {
-    pub(crate) pos:    Vec3A,
-    pub(crate) normal: Vec3A,
-    // TODO: uv: Vec2,
+    pub(crate) pos:    DVec3,
+    pub(crate) normal: DVec3,
+    // TODO: uv: DVec2,
 }
 
 // TODO: Benchmark differences between Enum and Trait for storing render objects
 #[derive(Clone, Copy, Debug)]
 pub enum Object {
     // TODO: Support Ellipsoid
-    Sphere { center: Vec3A, radius: f32 },
+    Sphere { center: DVec3, radius: f64 },
     Triangle { a: Vertex, b: Vertex, c: Vertex },
 }
 
 impl Object {
-    pub fn center(&self) -> Vec3A {
+    pub fn center(&self) -> DVec3 {
         match self {
             Self::Sphere { center, radius: _ } => *center,
             Self::Triangle { a, b, c } => (a.pos + b.pos + c.pos) / 3.0,
@@ -102,16 +102,16 @@ impl Object {
 }
 
 #[inline]
-pub fn random_unit_sphere(rng: &mut ThreadRng) -> Vec3A {
+pub fn random_unit_sphere(rng: &mut ThreadRng) -> DVec3 {
     loop {
         // Rejection sampling
-        let x = rng.gen_range(-1f32..1f32);
-        let y = rng.gen_range(-1f32..1f32);
-        let z = rng.gen_range(-1f32..1f32);
+        let x = rng.gen_range(-1.0..1.0);
+        let y = rng.gen_range(-1.0..1.0);
+        let z = rng.gen_range(-1.0..1.0);
 
-        let vector = Vec3A::new(x, y, z);
-        if vector.length_squared() <= 1f32 {
-            return vector.normalize_or_zero();
+        let vector = DVec3::new(x, y, z);
+        if vector.length_squared() <= 1.0 {
+            return vector;
         }
     }
 }
@@ -134,7 +134,7 @@ impl Scene {
     pub fn insert_object(
         &mut self,
         object: Static,
-        transform: Affine3A,
+        transform: DAffine3,
         materials: Vec<MaterialKey>,
     ) -> ObjectKey {
         let objects = object.objects.len();
@@ -150,7 +150,7 @@ impl Scene {
     pub fn add_instance(
         &mut self,
         object: ObjectKey,
-        transform: Affine3A,
+        transform: DAffine3,
         materials: Vec<MaterialKey>,
     ) {
         let Some((_, instances)) = self.objects.get_mut(object) else {
@@ -175,7 +175,7 @@ impl Scene {
     pub fn hit_scene(
         &self,
         ray: &Ray,
-        mut search_range: (Bound<f32>, Bound<f32>),
+        mut search_range: (Bound<f64>, Bound<f64>),
     ) -> Option<(HitRecord, MaterialKey)> {
         let mut closest = None;
 
@@ -186,8 +186,8 @@ impl Scene {
             } in transforms
             {
                 let transformed_ray = Ray::new(
-                    transform.inverse().transform_point3a(ray.origin),
-                    transform.inverse().transform_vector3a(ray.direction),
+                    transform.inverse().transform_point3(ray.origin),
+                    transform.inverse().transform_vector3(ray.direction),
                 );
                 let Some((hit_record, material)) = bvh.hit_scene(&transformed_ray, search_range)
                 else {
@@ -208,8 +208,8 @@ impl Material {
         &self,
         rng: &mut ThreadRng,
         ray: &Ray,
-        normal: Vec3A,
-    ) -> Vec3A {
+        normal: DVec3,
+    ) -> DVec3 {
         let diffuse = ray.origin + normal + random_unit_sphere(rng);
         let specular = ray.direction.normalize().reflect(normal);
         diffuse.lerp(specular, self.smoothness)

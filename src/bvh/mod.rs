@@ -3,40 +3,60 @@
 
 mod fixed;
 
-use core::f32;
-use std::arch::x86_64::{
-    __m128,
-    _mm_blendv_ps,
-};
+use core::f64;
 
 pub use fixed::{
     Static,
     StaticBuilder,
 };
-use glam::Vec3A;
-
-use crate::render::{
-    Object,
-    Ray,
+use glam::{
+    DVec3,
+    Vec3Swizzles,
 };
 
-#[repr(C)]
-union Vec3AInternal {
-    i: __m128,
-    v: Vec3A,
+use crate::{
+    render::{
+        Object,
+        Ray,
+    },
+    ACNE_MIN,
+};
+
+#[inline]
+fn min<T: PartialOrd>(
+    left: T,
+    right: T,
+) -> T {
+    if left < right {
+        left
+    } else {
+        right
+    }
+}
+
+#[inline]
+fn max<T: PartialOrd>(
+    left: T,
+    right: T,
+) -> T {
+    if left > right {
+        left
+    } else {
+        right
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct BoundingBox {
-    max: Vec3A,
-    min: Vec3A,
+    max: DVec3,
+    min: DVec3,
 }
 
 impl BoundingBox {
     pub const fn new() -> Self {
         Self {
-            max: Vec3A::splat(f32::MIN),
-            min: Vec3A::splat(f32::MAX),
+            max: DVec3::splat(f64::MIN),
+            min: DVec3::splat(f64::MAX),
         }
     }
 
@@ -44,53 +64,40 @@ impl BoundingBox {
     pub fn intersects(
         &self,
         ray: &Ray,
-    ) -> Option<f32> {
+    ) -> Option<f64> {
         // TODO: Check if blendv is actually any faster than min-max swaps
         // Theoretically should be faster according to intel docs
         // (4 vs 2 latency, .5 vs .66 throughput)
-        let bmin = unsafe {
-            Vec3AInternal {
-                i: _mm_blendv_ps(
-                    Vec3AInternal { v: self.min }.i,
-                    Vec3AInternal { v: self.max }.i,
-                    Vec3AInternal { v: ray.inv_dir }.i,
-                ),
-            }
-            .v
-        };
-        let bmax = unsafe {
-            Vec3AInternal {
-                i: _mm_blendv_ps(
-                    Vec3AInternal { v: self.max }.i,
-                    Vec3AInternal { v: self.min }.i,
-                    Vec3AInternal { v: ray.inv_dir }.i,
-                ),
-            }
-            .v
-        };
 
-        let tmin = ((bmin - ray.origin) * ray.inv_dir).max_element().max(0.0);
-        let tmax = ((bmax - ray.origin) * ray.inv_dir).min_element();
+        let t0 = ((self.min - ray.origin) * ray.inv_dir).to_array();
+        let t1 = ((self.max - ray.origin) * ray.inv_dir).to_array();
+
+        let mut tmin = 0.0;
+        let mut tmax = f64::INFINITY;
+        for (&t0, &t1) in t0.iter().zip(t1.iter()) {
+            tmin = min(max(t0, tmin), max(t1, tmin));
+            tmax = max(min(t0, tmax), min(t1, tmax));
+        }
 
         if tmin > tmax {
             None
         } else {
-            Some(tmin)
+            Some(tmin.max(ACNE_MIN))
         }
     }
 
     #[inline]
     fn grow_to_include_point(
         &mut self,
-        point: Vec3A,
+        point: DVec3,
     ) {
         self.max = self.max.max(point);
         self.min = self.min.min(point);
     }
 
-    pub fn half_surface_area(&self) -> f32 {
+    pub fn half_surface_area(&self) -> f64 {
         let size = self.max - self.min;
-        (size.x * size.y).abs() + (size.y * size.z).abs() + (size.z * size.x).abs()
+        size.dot(size.yzx())
     }
 
     pub fn grow_to_include(
@@ -99,8 +106,8 @@ impl BoundingBox {
     ) {
         match object {
             Object::Sphere { center, radius } => {
-                self.grow_to_include_point(center - Vec3A::splat(*radius));
-                self.grow_to_include_point(center + Vec3A::splat(*radius));
+                self.grow_to_include_point(center - DVec3::splat(*radius));
+                self.grow_to_include_point(center + DVec3::splat(*radius));
             },
             Object::Triangle { a, b, c } => {
                 self.grow_to_include_point(a.pos);
