@@ -53,8 +53,8 @@ pub const ACNE_MIN: f64 = 0.001;
 pub const WIDTH: u32 = 800;
 pub const HEIGHT: u32 = 600;
 
-pub const SAMPLES: u32 = 100;
-pub const BOUNCES: usize = 500;
+pub const SAMPLES: u32 = 50;
+pub const BOUNCES: usize = 50;
 
 #[inline]
 pub fn random_unit_circle(rng: &mut ThreadRng) -> DVec2 {
@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let material = Material {
                 diffuse:    DVec3::splat(0.3),
                 emmitance:  DVec3::splat(1.0),
-                smoothness: 0.0,
+                smoothness: 0.7,
                 radiance:   0.0,
             };
             scene.create_material(material)
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _guard = bunny_span.enter();
 
             let (document, buffers, _) =
-                gltf::import("models/bunny.glb").expect("Failed to load model");
+                gltf::import("models/happy.glb").expect("Failed to load model");
 
             for mesh in document.meshes() {
                 for prim in mesh.primitives() {
@@ -246,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 smoothness: 0.0,
 
                 emmitance: DVec3::splat(1f64),
-                radiance:  1.0,
+                radiance:  2.0,
             };
 
             let material = scene.create_material(material);

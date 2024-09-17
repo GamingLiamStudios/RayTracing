@@ -116,4 +116,12 @@ impl BoundingBox {
             },
         }
     }
+
+    pub fn merge(
+        &mut self,
+        right: &Self,
+    ) {
+        self.min = self.min.min(right.min);
+        self.max = self.max.max(right.max);
+    }
 }

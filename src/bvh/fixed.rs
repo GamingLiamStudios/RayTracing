@@ -6,16 +6,6 @@ use std::ops::{
     RangeBounds,
 };
 
-use rayon::{
-    current_num_threads,
-    iter::{
-        IndexedParallelIterator,
-        IntoParallelIterator,
-        ParallelBridge,
-        ParallelIterator,
-    },
-};
-
 use super::BoundingBox;
 use crate::render::{
     HitRecord,
@@ -53,6 +43,8 @@ impl StaticBuilder {
     }
 
     #[allow(clippy::cast_precision_loss)]
+    #[allow(clippy::cast_sign_loss)]
+    #[allow(clippy::cast_possible_truncation)]
     #[allow(clippy::too_many_lines)]
     pub fn build(mut self) -> Static {
         tracing::trace!(num_objects = self.objects.len(), bounds = ?self.root_bounds);
@@ -75,7 +67,6 @@ impl StaticBuilder {
         while let Some((idx, depth)) = search_nodes.pop() {
             let tree_node = &tree[idx];
             if tree_node.objects <= Self::BVH_MAX_LEAF {
-                //|| depth >= 3 {
                 leaf += 1;
                 depth_sum += depth;
                 max_depth = max_depth.max(depth);
@@ -85,11 +76,98 @@ impl StaticBuilder {
             let objects = &self.objects
                 [tree_node.index as usize..tree_node.index as usize + tree_node.objects as usize];
 
-            let bins = current_num_threads();
-            let bin_step = tree_node.bounds.max - tree_node.bounds.min;
+            let bins = 8;
+            let bin_step = bins as f64 / (tree_node.bounds.max - tree_node.bounds.min);
 
+            let lowest_cost = (0..3)
+                .filter_map(|axis| {
+                    let bound_bins = objects.iter().fold(
+                        vec![(BoundingBox::new(), 0u32); bins],
+                        |mut bins, (obj, _)| {
+                            let center = obj.center()[axis];
+                            let index = (((center - tree_node.bounds.min[axis]) * bin_step[axis])
+                                as usize)
+                                .min(bins.len() - 1);
+                            let (bin, bin_len) = &mut bins[index];
+                            bin.grow_to_include(obj);
+                            *bin_len += 1;
+
+                            bins
+                        },
+                    );
+
+                    // Left + Right sweep arrays
+                    let left_costs = bound_bins
+                        .iter()
+                        .scan(
+                            (BoundingBox::new(), 0.0),
+                            |(state_bounds, state_num), (bounds, num)| {
+                                state_bounds.merge(bounds);
+                                *state_num += f64::from(*num);
+
+                                Some((
+                                    *state_bounds,
+                                    if *state_num == 0.0 {
+                                        0.0
+                                    } else {
+                                        state_bounds.half_surface_area() * *state_num
+                                    },
+                                ))
+                            },
+                        )
+                        .take(bins - 1)
+                        .collect::<Vec<_>>();
+                    let mut right_costs = bound_bins
+                        .iter()
+                        .rev()
+                        .scan(
+                            (BoundingBox::new(), 0.0),
+                            |(state_bounds, state_num), (bounds, num)| {
+                                state_bounds.merge(bounds);
+                                *state_num += f64::from(*num);
+
+                                Some((
+                                    *state_bounds,
+                                    if *state_num == 0.0 {
+                                        0.0
+                                    } else {
+                                        state_bounds.half_surface_area() * *state_num
+                                    },
+                                ))
+                            },
+                        )
+                        .take(bins - 1)
+                        .collect::<Vec<_>>();
+                    right_costs.reverse();
+
+                    left_costs
+                        .iter()
+                        .zip(right_costs.iter())
+                        .enumerate()
+                        .filter_map(|(idx, ((_, left), (_, right)))| {
+                            if *left > 0.0 && *right > 0.0 {
+                                Some((idx, left + right))
+                            } else {
+                                None
+                            }
+                        })
+                        .min_by(|(_, left), (_, right)| left.total_cmp(right))
+                        .map(|(split_idx, cost)| {
+                            (
+                                cost,
+                                (1.0 / bin_step[axis])
+                                    .mul_add((split_idx + 1) as f64, tree_node.bounds.min[axis]),
+                                axis,
+                                left_costs[split_idx].0,
+                                right_costs[split_idx].0,
+                            )
+                        })
+                })
+                .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
+
+            /*
             let lowest_cost = (0..bins)
-                .map(|i| tree_node.bounds.min + bin_step * ((i + 1) as f64 / bins as f64))
+                .map(|i| tree_node.bounds.min + bin_step * (i + 1) as f64)
                 .par_bridge()
                 .flat_map(|v| v.to_array().into_par_iter().enumerate())
                 .filter_map(|(axis, split_point)| {
@@ -119,6 +197,7 @@ impl StaticBuilder {
                     Some((left_sa + right_sa, split_point, axis, left, right))
                 })
                 .min_by(|(left, ..), (right, ..)| left.total_cmp(right));
+            */
 
             let Some((_, split_point, axis, left, right)) = lowest_cost else {
                 // Just leave it
@@ -138,12 +217,23 @@ impl StaticBuilder {
             let mut right_start = 0;
             for i in 0..tree_node.objects {
                 let (obj, _) = &objects[i as usize];
-                if obj.center()[axis] > split_point {
+                if obj.center()[axis] >= split_point {
                     continue;
                 }
 
                 objects.swap(right_start as usize, i as usize);
                 right_start += 1;
+            }
+
+            if right_start == 0 || right_start == tree_node.objects {
+                tracing::warn!(
+                    "Couldn't split further. Size {} leaf exists",
+                    tree_node.objects
+                );
+                leaf += 1;
+                depth_sum += depth;
+                max_depth = max_depth.max(depth);
+                continue;
             }
 
             tracing::trace!(
