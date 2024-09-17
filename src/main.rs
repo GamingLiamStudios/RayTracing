@@ -172,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             tracing::debug!(num_primatives = builder.len());
             scene.insert_object(
-                builder.build(),
+                builder.build().expect("Zero sized scene"),
                 DAffine3::from_scale_rotation_translation(
                     DVec3::splat(1.0),
                     DQuat::from_euler(
@@ -230,7 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let material = scene.create_material(material);
             builder.append(object, 0);
-            scene.insert_object(builder.build(), DAffine3::IDENTITY, vec![material])
+            scene.insert_object(builder.build().expect("Zero sized scene"), DAffine3::IDENTITY, vec![material])
         };
 
         let _unit_sphere = {
@@ -251,7 +251,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let material = scene.create_material(material);
             builder.append(object, 0);
-            scene.insert_object(builder.build(), DAffine3::from_translation(DVec3::new(-2.0, 50.0, -2.0)), vec![material])
+            scene.insert_object(builder.build().expect("Zero sized scene"), DAffine3::from_translation(DVec3::new(-2.0, 50.0, -2.0)), vec![material])
         };
 
         {
@@ -271,7 +271,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let material = scene.create_material(material);
             builder.append(object, 0);
-            scene.insert_object(builder.build(), DAffine3::IDENTITY, vec![material]);
+            scene.insert_object(builder.build().expect("Zero sized scene"), DAffine3::IDENTITY, vec![material]);
         }
 
         tracing::info!(elapsed = ?begin_time.elapsed(), "Scene Built in {:.2}s", begin_time.elapsed().as_secs_f64());
