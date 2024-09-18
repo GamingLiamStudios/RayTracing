@@ -4,50 +4,50 @@
 use core::f64;
 use std::ops::Bound;
 
-use glam::{
-    DAffine3,
-    DVec3,
-};
+use glam::DAffine3;
 use rand::{
     rngs::ThreadRng,
     Rng,
 };
 use slotmap::SlotMap;
 
-use crate::bvh::Static;
+use crate::{
+    bvh::Static,
+    types::DVec3A,
+};
 
 #[derive(Clone, Copy)]
 pub struct Ray {
-    pub origin:    DVec3,
-    pub direction: DVec3,
-    pub inv_dir:   DVec3,
+    pub origin:    DVec3A,
+    pub direction: DVec3A,
+    pub inv_dir:   DVec3A,
 }
 
 impl Ray {
     pub fn new(
-        origin: DVec3,
-        direction: DVec3,
+        origin: DVec3A,
+        direction: DVec3A,
     ) -> Self {
         Self {
             origin,
             direction,
-            inv_dir: 1.0 / direction,
+            inv_dir: DVec3A::splat(1.0) / direction,
         }
     }
 
     #[inline]
     pub fn set_direction(
         &mut self,
-        new: DVec3,
+        new: DVec3A,
     ) {
         self.direction = new;
-        self.inv_dir = 1.0 / self.direction;
+        self.inv_dir = DVec3A::splat(1.0) / self.direction;
     }
 }
 
 pub struct HitRecord {
     pub along:  f64,
-    pub normal: DVec3,
+    pub normal: DVec3A,
 }
 
 slotmap::new_key_type! {
@@ -70,8 +70,8 @@ pub struct Scene {
 
 #[derive(Debug)]
 pub struct Material {
-    pub diffuse:   DVec3,
-    pub emmitance: DVec3,
+    pub diffuse:   DVec3A,
+    pub emmitance: DVec3A,
 
     pub smoothness: f64,
     pub radiance:   f64,
@@ -79,8 +79,8 @@ pub struct Material {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Vertex {
-    pub(crate) pos:    DVec3,
-    pub(crate) normal: DVec3,
+    pub(crate) pos:    DVec3A,
+    pub(crate) normal: DVec3A,
     // TODO: uv: DVec2,
 }
 
@@ -88,12 +88,12 @@ pub struct Vertex {
 #[derive(Clone, Copy, Debug)]
 pub enum Object {
     // TODO: Support Ellipsoid
-    Sphere { center: DVec3, radius: f64 },
+    Sphere { center: DVec3A, radius: f64 },
     Triangle { a: Vertex, b: Vertex, c: Vertex },
 }
 
 impl Object {
-    pub fn center(&self) -> DVec3 {
+    pub fn center(&self) -> DVec3A {
         match self {
             Self::Sphere { center, radius: _ } => *center,
             Self::Triangle { a, b, c } => (a.pos + b.pos + c.pos) / 3.0,
@@ -102,14 +102,14 @@ impl Object {
 }
 
 #[inline]
-pub fn random_unit_sphere(rng: &mut ThreadRng) -> DVec3 {
+pub fn random_unit_sphere(rng: &mut ThreadRng) -> DVec3A {
     loop {
         // Rejection sampling
         let x = rng.gen_range(-1.0..1.0);
         let y = rng.gen_range(-1.0..1.0);
         let z = rng.gen_range(-1.0..1.0);
 
-        let vector = DVec3::new(x, y, z);
+        let vector = DVec3A::new(x, y, z);
         if vector.length_squared() <= 1.0 {
             return vector;
         }
@@ -186,8 +186,10 @@ impl Scene {
             } in transforms
             {
                 let transformed_ray = Ray::new(
-                    transform.inverse().transform_point3(ray.origin),
-                    transform.inverse().transform_vector3(ray.direction),
+                    ray.origin
+                        .map_dvec3(|v| transform.inverse().transform_point3(v)),
+                    ray.direction
+                        .map_dvec3(|v| transform.inverse().transform_vector3(v)),
                 );
                 let Some((hit_record, material)) = bvh.hit_scene(&transformed_ray, search_range)
                 else {
@@ -208,8 +210,8 @@ impl Material {
         &self,
         rng: &mut ThreadRng,
         ray: &Ray,
-        normal: DVec3,
-    ) -> DVec3 {
+        normal: DVec3A,
+    ) -> DVec3A {
         let diffuse = ray.origin + normal + random_unit_sphere(rng);
         let specular = ray.direction.normalize().reflect(normal);
         diffuse.lerp(specular, self.smoothness)

@@ -13,11 +13,19 @@ use std::{
     },
 };
 
+use rayon::iter::{
+    ParallelBridge,
+    ParallelIterator,
+};
+
 use super::BoundingBox;
-use crate::render::{
-    HitRecord,
-    Object,
-    Ray,
+use crate::{
+    render::{
+        HitRecord,
+        Object,
+        Ray,
+    },
+    types::DVec3A,
 };
 
 pub struct StaticBuilder {
@@ -78,8 +86,9 @@ impl StaticBuilder {
             return;
         }
 
-        let bin_step = Self::BINS as f64 / (root_bounds.max - root_bounds.min);
+        let bin_step = DVec3A::splat(Self::BINS as f64) / (root_bounds.max - root_bounds.min);
         let lowest_cost = (0..3)
+            .par_bridge()
             .filter_map(|axis| {
                 let bound_bins = objects.iter().fold(
                     vec![(BoundingBox::new(), 0u32); Self::BINS],
@@ -469,7 +478,7 @@ impl Static {
                         HitRecord {
                             along:  t,
                             normal: (a.normal * u + b.normal * v + c.normal * (1.0 - u - v))
-                                .normalize_or_zero(),
+                                .normalize(),
                         },
                         *mat_idx,
                     )

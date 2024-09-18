@@ -1,13 +1,18 @@
 // Copyright (C) 2024 GLStudios
 // SPDX-License-Identifier: LGPL-2.1-only
 
-#![feature(array_chunks)]
-#![feature(new_range_api)]
-#![feature(generic_arg_infer)]
-#![feature(iter_map_windows)]
+#![allow(incomplete_features)]
+#![feature(generic_const_exprs)]
+//#![feature(array_chunks)]
+//#![feature(new_range_api)]
+//#![feature(generic_arg_infer)]
+//#![feature(iter_map_windows)]
 #![feature(iter_array_chunks)]
-#![feature(const_mut_refs)]
-#![feature(allocator_api)]
+//#![feature(const_mut_refs)]
+//#![feature(allocator_api)]
+#![feature(portable_simd)]
+//#![feature(const_trait_impl)]
+#![feature(adt_const_params)]
 
 use core::f64;
 use std::{
@@ -43,6 +48,7 @@ use render::{
     Vertex,
 };
 use rgb::Rgb;
+use types::DVec3A;
 
 mod bvh;
 mod render;
@@ -73,10 +79,10 @@ pub fn random_unit_circle(rng: &mut ThreadRng) -> DVec2 {
 #[inline]
 #[allow(clippy::cast_possible_truncation)]
 #[allow(clippy::cast_sign_loss)]
-fn process_ray(mut input: DVec3) -> Rgb<u16> {
+fn process_ray(mut input: DVec3A) -> Rgb<u16> {
     // Post-processing
     // "Tone Mapping"
-    input = input.clamp(DVec3::splat(0.0), DVec3::splat(1.0));
+    input = input.clamp(DVec3A::splat(0.0), DVec3A::splat(1.0));
     // Gamma correction
     input = input.powf(1.0 / 1.8);
 
@@ -84,7 +90,7 @@ fn process_ray(mut input: DVec3) -> Rgb<u16> {
 
     // Saturating cast - Will auto-clamp within bounds of u16
     input *= f64::from(u16::MAX);
-    Rgb::new(input.x as u16, input.y as u16, input.z as u16)
+    Rgb::new(input.x() as u16, input.y() as u16, input.z() as u16)
 }
 
 #[allow(clippy::cast_precision_loss)]
@@ -105,8 +111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let bunny1_mat = {
             let material = Material {
-                diffuse:    DVec3::splat(0.3),
-                emmitance:  DVec3::splat(1.0),
+                diffuse:    DVec3A::splat(0.3),
+                emmitance:  DVec3A::splat(1.0),
                 smoothness: 0.7,
                 radiance:   0.0,
             };
@@ -150,16 +156,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     for [a, b, c] in indices.into_u32().map(|v| v as usize).array_chunks() {
                         let tri = Object::Triangle {
                             a: Vertex {
-                                pos:    Vec3::from_array(positions[a]).as_dvec3(),
-                                normal: Vec3::from_array(normals[a]).as_dvec3(),
+                                pos:    DVec3A::from_dvec3(Vec3::from_array(positions[a]).as_dvec3()),
+                                normal: DVec3A::from_dvec3(Vec3::from_array(normals[a]).as_dvec3()),
                             },
                             b: Vertex {
-                                pos:    Vec3::from_array(positions[b]).as_dvec3(),
-                                normal: Vec3::from_array(normals[b]).as_dvec3(),
+                                pos:    DVec3A::from_dvec3(Vec3::from_array(positions[b]).as_dvec3()),
+                                normal: DVec3A::from_dvec3(Vec3::from_array(normals[b]).as_dvec3()),
                             },
                             c: Vertex {
-                                pos:    Vec3::from_array(positions[c]).as_dvec3(),
-                                normal: Vec3::from_array(normals[c]).as_dvec3(),
+                                pos:    DVec3A::from_dvec3(Vec3::from_array(positions[c]).as_dvec3()),
+                                normal: DVec3A::from_dvec3(Vec3::from_array(normals[c]).as_dvec3()),
                             },
                         };
                         builder.append(tri, 0);
@@ -189,8 +195,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let bunny2_mat = {
             let material = Material {
-                diffuse:    DVec3::new(0.7, 0.3, 0.3),
-                emmitance:  DVec3::splat(1.0),
+                diffuse:    DVec3A::new(0.7, 0.3, 0.3),
+                emmitance:  DVec3A::splat(1.0),
                 smoothness: 0.0,
                 radiance:   0.0,
             };
@@ -217,14 +223,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut builder = bvh::StaticBuilder::new();
 
             let object = render::Object::Sphere {
-                center: DVec3::new(0.0, -1000.065, 0.0),
+                center: DVec3A::new(0.0, -1000.065, 0.0),
                 radius: 1000f64,
             };
             let material = render::Material {
-                diffuse:    DVec3::new(0.5, 0.5, 0.5),
+                diffuse:    DVec3A::new(0.5, 0.5, 0.5),
                 smoothness: 0f64,
 
-                emmitance: DVec3::splat(1f64),
+                emmitance: DVec3A::splat(1f64),
                 radiance:  0f64,
             };
 
@@ -238,14 +244,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut builder = bvh::StaticBuilder::new();
 
             let object = render::Object::Sphere {
-                center: DVec3::new(0.0, 0.0, 0.0),
+                center: DVec3A::new(0.0, 0.0, 0.0),
                 radius: 25.0,
             };
             let material = render::Material {
-                diffuse:    DVec3::new(0.5, 0.5, 0.5),
+                diffuse:    DVec3A::new(0.5, 0.5, 0.5),
                 smoothness: 0.0,
 
-                emmitance: DVec3::splat(1f64),
+                emmitance: DVec3A::splat(1f64),
                 radiance:  2.0,
             };
 
@@ -258,14 +264,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut builder = bvh::StaticBuilder::new();
 
             let object = render::Object::Sphere {
-                center: DVec3::new(-0.4, 0.09, 0.5),
+                center: DVec3A::new(-0.4, 0.09, 0.5),
                 radius: 0.15,
             };
             let material = render::Material {
-                diffuse:    DVec3::new(0.5, 0.5, 0.5),
+                diffuse:    DVec3A::new(0.5, 0.5, 0.5),
                 smoothness: 1.0,
 
-                emmitance: DVec3::splat(1f64),
+                emmitance: DVec3A::splat(1f64),
                 radiance:  0.0,
             };
 
@@ -285,15 +291,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let focal_length = 1.0;
     let defocus = 0.05;
 
-    let camera_position = DVec3::new(0.3, 0.07, -1.0);
-    let look_at = DVec3::new(-0.15, 0.07, 0.0);
-    let camera_up = DVec3::new(0.0, 1.0, 0.0);
+    let camera_position = DVec3A::new(0.3, 0.07, -1.0);
+    let look_at = DVec3A::new(-0.15, 0.07, 0.0);
+    let camera_up = DVec3A::new(0.0, 1.0, 0.0);
 
     let viewport_height = 2.0 * (fov.to_radians() / 2.0).tan() * focal_length;
     let viewport_width = viewport_height * (f64::from(WIDTH) / f64::from(HEIGHT));
 
-    let focal_w = (camera_position - look_at).normalize_or_zero();
-    let focal_u = camera_up.cross(focal_w).normalize_or_zero();
+    let focal_w = (camera_position - look_at).normalize();
+    let focal_u = camera_up.cross(focal_w).normalize();
     let focal_v = focal_w.cross(focal_u);
 
     let viewport_u = focal_u * viewport_width;
@@ -302,8 +308,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let delta_u = viewport_u / f64::from(WIDTH);
     let delta_v = viewport_v / f64::from(HEIGHT);
 
-    let viewport_origin = camera_position - (focal_length * focal_w)
-        + 0.5 * (delta_u + delta_v - viewport_u - viewport_v);
+    let viewport_origin = camera_position - (focal_w * focal_length)
+        + (delta_u + delta_v - viewport_u - viewport_v) * 0.5;
 
     let defocus_radi = focal_length * (defocus / 2.0f64).to_radians().tan();
     let defocus_u = focal_u * defocus_radi;
@@ -324,22 +330,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let y = idx / WIDTH as usize;
                 let x = idx % WIDTH as usize;
 
-                let pixel_center = viewport_origin + x as f64 * delta_u + y as f64 * delta_v;
+                let pixel_center = viewport_origin + delta_u * x as f64 + delta_v * y as f64;
                 //println!("{:?} {:?}", ray.origin, ray.direction);
 
                 // TODO: Importance sampling
                 let colored = (0..SAMPLES)
                     .par_bridge()
                     .fold(
-                        || DVec3::splat(0.0),
+                        || DVec3A::splat(0.0),
                         |colored, _| {
                             let mut rng = rand::thread_rng();
 
-                            let aa_shift = rng.gen_range(-0.5..0.5) * delta_u
-                                + rng.gen_range(-0.5..0.5) * delta_v;
+                            let aa_shift =  delta_u * rng.gen_range(-0.5..0.5)
+                                + delta_v * rng.gen_range(-0.5..0.5);
                             let origin = camera_position
                                 + if defocus_radi <= 0.0 {
-                                    DVec3::splat(0.0)
+                                    DVec3A::splat(0.0)
                                 } else {
                                     let rand_circ = random_unit_circle(&mut rng);
                                     defocus_u * rand_circ.x + defocus_v * rand_circ.y
@@ -348,8 +354,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let mut ray =
                                 render::Ray::new(origin, pixel_center + aa_shift - origin);
 
-                            let mut ray_color = DVec3::splat(1.0);
-                            let mut sample_color = DVec3::splat(0.0);
+                            let mut ray_color = DVec3A::splat(1.0);
+                            let mut sample_color = DVec3A::splat(0.0);
                             let mut bounces = 0;
                             for _ in 0..BOUNCES {
                                 bounces += 1;
@@ -358,9 +364,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let Some((render::HitRecord { along, normal }, mat_idx)) = scene
                                     .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
                                 else {
-                                    let a = 0.5 * (ray.direction.normalize().y + 1.0);
-                                    let sky = DVec3::splat(1.0) * (1.0 - a)
-                                        + DVec3::new(0.5, 0.7, 1.0) * a;
+                                    let a = 0.5 * (ray.direction.normalize().y() + 1.0);
+                                    let sky = DVec3A::splat(1.0) * (1.0 - a)
+                                        + DVec3A::new(0.5, 0.7, 1.0) * a;
                                     sample_color += sky * ray_color;
                                     break;
                                 };
