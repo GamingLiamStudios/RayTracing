@@ -139,7 +139,7 @@ impl Scene {
     ) -> ObjectKey {
         let objects = object.objects.len();
         let id = self.objects.insert((object, vec![Instance {
-            transform,
+            transform: transform.inverse(),
             materials,
         }]));
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
@@ -157,7 +157,7 @@ impl Scene {
             return;
         };
         instances.push(Instance {
-            transform,
+            transform: transform.inverse(),
             materials,
         });
 
@@ -186,8 +186,8 @@ impl Scene {
             } in transforms
             {
                 let transformed_ray = Ray::new(
-                    transform.inverse().transform_point3(ray.origin),
-                    transform.inverse().transform_vector3(ray.direction),
+                    transform.transform_point3(ray.origin),
+                    transform.transform_vector3(ray.direction),
                 );
                 let Some((hit_record, material)) = bvh.hit_scene(&transformed_ray, search_range)
                 else {
