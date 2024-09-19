@@ -87,7 +87,7 @@ pub struct Vertex {
 // TODO: Benchmark differences between Enum and Trait for storing render objects
 #[derive(Clone, Copy, Debug)]
 pub enum Object {
-    // TODO: Support Ellipsoid
+    // TODO: More primatives
     Sphere { center: DVec3, radius: f64 },
     Triangle { a: Vertex, b: Vertex, c: Vertex },
 }

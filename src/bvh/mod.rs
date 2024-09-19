@@ -65,10 +65,6 @@ impl BoundingBox {
         &self,
         ray: &Ray,
     ) -> Option<f64> {
-        // TODO: Check if blendv is actually any faster than min-max swaps
-        // Theoretically should be faster according to intel docs
-        // (4 vs 2 latency, .5 vs .66 throughput)
-
         let t0 = ((self.min - ray.origin) * ray.inv_dir).to_array();
         let t1 = ((self.max - ray.origin) * ray.inv_dir).to_array();
 

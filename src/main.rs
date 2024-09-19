@@ -1,13 +1,13 @@
 // Copyright (C) 2024 GLStudios
 // SPDX-License-Identifier: LGPL-2.1-only
 
-#![feature(array_chunks)]
-#![feature(new_range_api)]
-#![feature(generic_arg_infer)]
-#![feature(iter_map_windows)]
+//#![feature(array_chunks)]
+//#![feature(new_range_api)]
+//#![feature(generic_arg_infer)]
+//#![feature(iter_map_windows)]
 #![feature(iter_array_chunks)]
-#![feature(const_mut_refs)]
-#![feature(allocator_api)]
+//#![feature(const_mut_refs)]
+//#![feature(allocator_api)]
 
 use core::f64;
 use std::{
@@ -327,7 +327,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let pixel_center = viewport_origin + x as f64 * delta_u + y as f64 * delta_v;
                 //println!("{:?} {:?}", ray.origin, ray.direction);
 
-                // TODO: Importance sampling
                 let colored = (0..SAMPLES)
                     .par_bridge()
                     .fold(

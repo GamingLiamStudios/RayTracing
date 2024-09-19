@@ -422,6 +422,7 @@ impl Static {
                     }
 
                     // TODO: Better self-intersection testing (shadow acne)
+                    // Look into Ray-Tracing Gems Ch7
 
                     let intersection_point = ray.origin + ray.direction * root;
                     let normal = (intersection_point - center) / radius;
