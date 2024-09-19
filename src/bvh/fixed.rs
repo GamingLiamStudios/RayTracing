@@ -402,34 +402,36 @@ impl Static {
         for (obj, mat_idx) in &self.objects[start..start + len] {
             let matched = match obj {
                 Object::Sphere { center, radius } => {
-                    let offset_origin = center - ray.origin;
-                    let a = ray.direction.length_squared();
-                    let h = ray.direction.dot(offset_origin);
-                    let c = radius.mul_add(-radius, offset_origin.length_squared());
+                    let center_offset = center - ray.origin;
 
-                    let discrim = h.mul_add(h, -(a * c));
+                    // Uses concepts from Ray Tracing Gems ch7, but with custom spin
+                    // https://www.desmos.com/calculator/a7rvtxusuh
+
+                    let midpoint = center_offset.dot(ray.direction) / ray.direction.length();
+                    let discrim = midpoint.mul_add(midpoint, radius * radius)
+                        - center_offset.length_squared();
+
+                    // if < 0.0, then it does not hit the sphere at all
                     if discrim < 0.0 {
                         continue;
                     }
 
                     let sqrt_d = discrim.sqrt();
-                    let mut root = (h - sqrt_d) / a;
-                    if !search_range.contains(&root) {
-                        root = (h + sqrt_d) / a;
-                        if !search_range.contains(&root) {
+                    let mut along = (midpoint - sqrt_d) / ray.direction.length();
+                    if !search_range.contains(&along) {
+                        along = (midpoint + sqrt_d) / ray.direction.length();
+                        if !search_range.contains(&along) {
                             continue;
                         }
                     }
 
-                    // TODO: Better self-intersection testing (shadow acne)
-                    // Look into Ray-Tracing Gems Ch7
-
-                    let intersection_point = ray.origin + ray.direction * root;
-                    let normal = (intersection_point - center) / radius;
+                    let surface = ray.origin + along * ray.direction;
+                    let normal = (surface - center) / radius;
 
                     (
                         HitRecord {
-                            along: root,
+                            along,
+                            surface,
                             normal,
                         },
                         *mat_idx,
@@ -466,11 +468,15 @@ impl Static {
                         continue;
                     }
 
+                    let surface = a.pos * u + b.pos * v + c.pos * (1.0 - u - v);
+                    let normal =
+                        (a.normal * u + b.normal * v + c.normal * (1.0 - u - v)).normalize();
+
                     (
                         HitRecord {
-                            along:  t,
-                            normal: (a.normal * u + b.normal * v + c.normal * (1.0 - u - v))
-                                .normalize_or_zero(),
+                            along: t,
+                            surface,
+                            normal,
                         },
                         *mat_idx,
                     )

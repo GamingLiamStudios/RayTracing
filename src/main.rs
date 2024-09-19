@@ -48,7 +48,7 @@ mod bvh;
 mod render;
 mod types;
 
-pub const ACNE_MIN: f64 = 0.001;
+pub const ACNE_MIN: f64 = f32::EPSILON as f64;
 
 pub const WIDTH: u32 = 800;
 pub const HEIGHT: u32 = 600;
@@ -177,9 +177,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     DVec3::splat(1.0),
                     DQuat::from_euler(
                         glam::EulerRot::XYZ,
-                        90.0f64.to_radians(),
-                        0.0f64.to_radians(),
-                        90.0f64.to_radians(),
+                        90.0_f64.to_radians(),
+                        0.0_f64.to_radians(),
+                        90.0_f64.to_radians(),
                     ),
                     DVec3::new(-0.3, -0.01, 0.05),
                 ),
@@ -218,14 +218,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let object = render::Object::Sphere {
                 center: DVec3::new(0.0, -1000.065, 0.0),
-                radius: 1000f64,
+                radius: 1000.0,
             };
             let material = render::Material {
                 diffuse:    DVec3::new(0.5, 0.5, 0.5),
-                smoothness: 0f64,
+                smoothness: 0.0,
 
-                emmitance: DVec3::splat(1f64),
-                radiance:  0f64,
+                emmitance: DVec3::splat(1.0),
+                radiance:  0.0,
             };
 
             let material = scene.create_material(material);
@@ -245,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 diffuse:    DVec3::new(0.5, 0.5, 0.5),
                 smoothness: 0.0,
 
-                emmitance: DVec3::splat(1f64),
+                emmitance: DVec3::splat(1.0),
                 radiance:  2.0,
             };
 
@@ -265,7 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 diffuse:    DVec3::new(0.5, 0.5, 0.5),
                 smoothness: 1.0,
 
-                emmitance: DVec3::splat(1f64),
+                emmitance: DVec3::splat(1.0),
                 radiance:  0.0,
             };
 
@@ -354,7 +354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 bounces += 1;
 
                                 // TODO: Better shadow acne handling
-                                let Some((render::HitRecord { along, normal }, mat_idx)) = scene
+                                let Some((render::HitRecord { along: _, surface, normal }, mat_idx)) = scene
                                     .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
                                 else {
                                     let a = 0.5 * (ray.direction.normalize().y + 1.0);
@@ -368,7 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     scene.material(mat_idx).expect("Material does not exist");
 
                                 // Bounce
-                                ray.origin += ray.direction * along;
+                                ray.origin = surface;
                                 ray.set_direction(material.bounce_ray(&mut rng, &ray, normal));
 
                                 sample_color += material.emmitance * material.radiance * ray_color;

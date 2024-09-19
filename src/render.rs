@@ -46,8 +46,9 @@ impl Ray {
 }
 
 pub struct HitRecord {
-    pub along:  f64,
-    pub normal: DVec3,
+    pub along:   f64,
+    pub surface: DVec3,
+    pub normal:  DVec3,
 }
 
 slotmap::new_key_type! {
@@ -57,8 +58,9 @@ slotmap::new_key_type! {
 
 #[derive(Debug)]
 pub struct Instance {
-    transform: DAffine3,
-    materials: Vec<MaterialKey>,
+    transform:     DAffine3,
+    inv_transform: DAffine3,
+    materials:     Vec<MaterialKey>,
 }
 
 #[derive(Debug)]
@@ -139,7 +141,8 @@ impl Scene {
     ) -> ObjectKey {
         let objects = object.objects.len();
         let id = self.objects.insert((object, vec![Instance {
-            transform: transform.inverse(),
+            transform,
+            inv_transform: transform.inverse(),
             materials,
         }]));
         let (scale, rotation, translation) = transform.to_scale_rotation_translation();
@@ -157,7 +160,8 @@ impl Scene {
             return;
         };
         instances.push(Instance {
-            transform: transform.inverse(),
+            transform,
+            inv_transform: transform.inverse(),
             materials,
         });
 
@@ -182,17 +186,21 @@ impl Scene {
         for (bvh, transforms) in self.objects.values() {
             for Instance {
                 transform,
+                inv_transform,
                 materials,
             } in transforms
             {
                 let transformed_ray = Ray::new(
-                    transform.transform_point3(ray.origin),
-                    transform.transform_vector3(ray.direction),
+                    inv_transform.transform_point3(ray.origin),
+                    inv_transform.transform_vector3(ray.direction),
                 );
-                let Some((hit_record, material)) = bvh.hit_scene(&transformed_ray, search_range)
+                let Some((mut hit_record, material)) =
+                    bvh.hit_scene(&transformed_ray, search_range)
                 else {
                     continue;
                 };
+
+                hit_record.surface = transform.transform_point3(hit_record.surface);
 
                 search_range.1 = Bound::Included(hit_record.along);
                 closest = Some((hit_record, materials[material]));
