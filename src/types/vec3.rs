@@ -216,10 +216,9 @@ where
     }
 }
 
-impl<T: SimdElement + Sub<Output = T>> Vec3A<T>
+impl<T: SimdElement + num_traits::ConstZero + num_traits::Float> Vec3A<T>
 where
     Simd<T, 4>: Mul<Output = Simd<T, 4>>,
-    <Simd<T, 4> as Mul>::Output: SimdFloat<Scalar = T>,
 {
     #[inline]
     pub fn powf(
@@ -229,8 +228,8 @@ where
     where
         Simd<T, 4>: StdFloat,
     {
-        // TODO: Investigate accuracy
-        Self((Self::splat(pow).0 * self.0.ln()).exp())
+        //Self((Simd::splat(pow) * self.0.ln()).exp())
+        Self::from_array(self.to_array().map(|v| v.powf(pow)))
     }
 
     #[inline]
@@ -256,7 +255,7 @@ where
         <Simd<T, 4> as Mul>::Output: Index<usize, Output = T>,
     {
         let prod = self.0 * other.0;
-        prod.reduce_sum() - prod[3]
+        prod[0] + prod[1] + prod[2]
         // Ensure no garbage in `w` term affects output
     }
 
@@ -279,8 +278,7 @@ where
         T: num_traits::Float,
         Self: Div<T, Output = Self>,
     {
-        let length = self.length();
-        self / length
+        self / self.length()
     }
 
     #[inline]
