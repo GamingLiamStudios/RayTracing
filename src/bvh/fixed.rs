@@ -416,6 +416,7 @@ impl Static {
                         continue;
                     }
 
+                    // Can possibly improve this bit slightly
                     let sqrt_d = discrim.sqrt();
                     let mut along = (midpoint - sqrt_d) / ray.direction.length();
                     if !search_range.contains(&along) {

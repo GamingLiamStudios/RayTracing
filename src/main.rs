@@ -12,7 +12,7 @@
 use core::f64;
 use std::{
     io::Write,
-    ops::Bound,
+    ops::Bound, sync::atomic::AtomicUsize,
 };
 
 use glam::{
@@ -118,7 +118,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _guard = bunny_span.enter();
 
             let (document, buffers, _) =
-                gltf::import("models/happy.glb").expect("Failed to load model");
+                gltf::import("models/dragon.glb").expect("Failed to load model");
 
             for mesh in document.meshes() {
                 for prim in mesh.primitives() {
@@ -315,7 +315,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let begin_time = std::time::Instant::now();
 
+        let ray_count = AtomicUsize::new(0);
+
         //let mut rng = rand::thread_rng();
+        // TODO: Better load balancing - See Ray Tracing Gems Ch10
         render_buffer
             .par_iter_mut()
             .enumerate()
@@ -353,7 +356,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for _ in 0..BOUNCES {
                                 bounces += 1;
 
-                                // TODO: Better shadow acne handling
+                                let _ = ray_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                                // TODO: Better self-intersection handling
+                                // See: Ray Tracing Gems Ch6
                                 let Some((render::HitRecord { along: _, surface, normal }, mat_idx)) = scene
                                     .hit_scene(&ray, (Bound::Included(ACNE_MIN), Bound::Unbounded))
                                 else {
@@ -386,8 +392,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
         //bar.finish_and_clear();
+        let rays = ray_count.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1_000_000.0;
 
-        tracing::info!(elapsed = ?begin_time.elapsed(), "Scene Rendered in {:.2}s", begin_time.elapsed().as_secs_f64());
+        tracing::info!(elapsed = ?begin_time.elapsed(), "Scene Rendered in {:.2}s ({rays:.2} mray/s avg)", begin_time.elapsed().as_secs_f64());
     });
 
     // Write results to a PNG

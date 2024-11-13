@@ -12,7 +12,7 @@ tracing-subscriber = "0.3"
 
 png = "0.17"
 rgb = "0.8"
-bytemuck = { version = "1.18", features = ["must_cast", "min_const_generics"] }
+bytemuck = { version = "1.19", features = ["must_cast", "min_const_generics"] }
 
 glam = "0.29"
 rand = "0.8"

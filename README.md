@@ -20,11 +20,12 @@ basically just throwing things at the wall and seeing what sticks.
   - [ ] Investigate build times for large models (Stanford Lucy - 5s to load GLTF, 7s to build BVH)
   - [ ] Meshlets - UE5 style
   - [ ] Dynamic Programming (World-space pixel caching)
-  - [ ] Potential to lower FP precision
+  - [ ] Investigate potential to lower FP precision
 - Post Processing
   - [ ] HDR
   - [ ] Better Tonemapping
   - [ ] Fun shaders for stylization
+  - [ ] Denoising
 - Misc
   - [ ] Real-time Interface
   - [ ] BVH caching
